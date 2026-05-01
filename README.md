@@ -84,15 +84,35 @@ make test
 ```
 
 ### 5. Start Airflow (Docker Compose)
+First-time setup:
 ```bash
-make airflow-up
-# Open http://localhost:8080  (user: airflow / pass: airflow)
-# Trigger the DAG: nba_etl_pipeline
-```
+cp infra/airflow.env.example infra/airflow.env
+# (optional) generate a real Fernet key and paste it into airflow.env:
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-### 6. (Optional) Trigger the DAG from CLI
+make airflow-up        # builds the image, starts postgres + scheduler + webserver
+# First boot takes 5-10 minutes (image pull + pip install + db migrate).
+# Subsequent boots are seconds.
+```
+Open http://localhost:8080 and log in with `admin` / `admin`. The
+`nba_etl_pipeline` DAG appears paused — toggle it on, then trigger a run
+from the UI or via:
 ```bash
 make trigger-dag
+```
+The DAG runs against the same `./out/` directory the local pipeline
+writes to (mounted into the container as `/opt/airflow/out`), so you can
+inspect output with:
+```bash
+.venv/Scripts/python.exe -c "import pandas as pd; print(pd.read_parquet('./out/processed/nba/team_game_stats/'))"
+```
+
+Useful commands:
+```bash
+make airflow-logs      # tail the scheduler + webserver logs
+make dag-list          # list any DAG import errors
+make airflow-rebuild   # rebuild the image after editing requirements.txt or Dockerfile
+make airflow-down      # stop the stack
 ```
 
 ---
@@ -143,8 +163,8 @@ make trigger-dag
 
 ## Project Status
 
-- [ ] Phase 1 — Core ETL (ingest → transform → S3 write)
-- [ ] Phase 2 — Airflow DAG + Docker Compose
+- [x] Phase 1 — Core ETL (ingest → transform → S3 write)
+- [x] Phase 2 — Airflow DAG + Docker Compose
 - [ ] Phase 3 — Feature engineering + rolling windows
 - [ ] Phase 4 — Cloud deploy (EC2/EMR) + IAM hardening
 - [ ] Phase 5 — Docs, demo, CI/CD
