@@ -22,11 +22,12 @@ if _HADOOP_DIR.is_dir() and not os.environ.get("HADOOP_HOME"):
 os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
 os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
+from etl.features import build_rolling_features  # noqa: E402
 from etl.ingest import ingest_box_scores  # noqa: E402
 from etl.paths import is_local_mode  # noqa: E402
 from etl.schema import RAW_BOX_SCORE_SCHEMA  # noqa: E402
 from etl.transform import aggregate_team_game, get_spark, join_top_players  # noqa: E402
-from etl.write import write_processed  # noqa: E402
+from etl.write import write_features, write_processed  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,12 +88,22 @@ def main() -> int:
 
         processed_path = write_processed(processed, s3_bucket)
 
+        # Build rolling-window features over the *full* processed history
+        # so the lookback window has prior runs' games to draw from.
+        full_processed = spark.read.parquet(processed_path)
+        features = build_rolling_features(full_processed)
+        features_count = features.count()
+        features_path = write_features(features, s3_bucket)
+
         elapsed = time.time() - started
         logger.info(
-            "Done. raw_rows=%d processed_rows=%d output=%s elapsed=%.1fs",
+            "Done. raw_rows=%d processed_rows=%d features_rows=%d "
+            "processed=%s features=%s elapsed=%.1fs",
             raw_count,
             processed_count,
+            features_count,
             processed_path,
+            features_path,
             elapsed,
         )
         return 0

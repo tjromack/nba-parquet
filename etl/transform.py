@@ -13,8 +13,14 @@ S3A_PACKAGES = (
 
 
 def get_spark(app_name: str = "nba-etl") -> SparkSession:
-    builder = SparkSession.builder.appName(app_name).master(
-        os.environ.get("SPARK_MASTER", "local[*]")
+    builder = (
+        SparkSession.builder.appName(app_name).master(
+            os.environ.get("SPARK_MASTER", "local[*]")
+        )
+        # Dynamic partition overwrite is essential for incremental writes:
+        # a daily run touching one (season, game_date) partition must not
+        # wipe sibling partitions for other days in the same prefix.
+        .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
     )
 
     if not is_local_mode():

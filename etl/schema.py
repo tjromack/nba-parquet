@@ -41,6 +41,24 @@ RAW_BOX_SCORE_SCHEMA = StructType(
     ]
 )
 
+FEATURE_SCHEMA = StructType(
+    [
+        StructField("season", IntegerType(), nullable=False),
+        StructField("game_date", DateType(), nullable=False),
+        StructField("game_id", StringType(), nullable=False),
+        StructField("team_id", IntegerType(), nullable=False),
+        StructField("team_abbreviation", StringType(), nullable=False),
+        StructField("games_in_window", IntegerType(), nullable=True),
+        StructField("rolling_pts", DoubleType(), nullable=True),
+        StructField("rolling_efg_pct", DoubleType(), nullable=True),
+        StructField("rolling_ts_pct", DoubleType(), nullable=True),
+        StructField("rolling_ast_to_tov", DoubleType(), nullable=True),
+        StructField("rolling_win_pct", DoubleType(), nullable=True),
+        StructField("rolling_pts_home", DoubleType(), nullable=True),
+        StructField("rolling_pts_away", DoubleType(), nullable=True),
+    ]
+)
+
 PROCESSED_SCHEMA = StructType(
     [
         StructField("season", IntegerType(), nullable=False),

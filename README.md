@@ -136,7 +136,17 @@ make airflow-down      # stop the stack
 | assist_to_turnover | double | AST / TOV |
 | top_scorer | string | Player with most points for the team in this game |
 
-**Feature layer** — `rolling_team_stats`: 10-game rolling averages of the above, designed to plug directly into spread / total / win-probability prediction models.
+**Feature layer** — `rolling_team_stats` (one row per (team, game), partitioned by `season`):
+| Column | Type | Description |
+|---|---|---|
+| games_in_window | int | Actual lookback size (1–10; smaller for early-season games) |
+| rolling_pts | double | Avg points over last 10 games |
+| rolling_efg_pct | double | Avg effective FG% over last 10 games |
+| rolling_ts_pct | double | Avg true shooting % over last 10 games |
+| rolling_ast_to_tov | double | Avg AST/TOV ratio over last 10 games |
+| rolling_win_pct | double | Win fraction over last 10 games |
+| rolling_pts_home | double | Avg points in home games within the window (NULL if none) |
+| rolling_pts_away | double | Avg points in away games within the window (NULL if none) |
 
 ---
 
@@ -153,11 +163,23 @@ make airflow-down      # stop the stack
 
 ---
 
-## Demo / Screenshot
+## Demo
 
-> _Airflow DAG graph and S3 output tree screenshots — coming after Phase 2_
->
-> ![DAG screenshot placeholder](docs/dag_screenshot.png)
+The pipeline has been validated end-to-end against real 2025–26 NBA playoff data:
+
+**Per-game ETL (4/29 playoff slate, scripted run):**
+![Box-score smoke test](demo%20screenshots/4_29_26_nba_games.png)
+
+**Airflow DAG graph view (autonomous run, all five tasks green):**
+![DAG graph](demo%20screenshots/dag_screenshot.png)
+
+**14-day backfill via `airflow dags backfill 2026-04-19 2026-05-02` — 70/70 task instances succeeded:**
+![Backfill grid](demo%20screenshots/backfill_success.png)
+
+**Rolling-features leaderboard, sorted by trailing true-shooting % through 5/3:**
+![Rolling features leaderboard](demo%20screenshots/thru5_3_26_leaderboard.png)
+
+The leaderboard cross-reconciles against ESPN: NYK shows 4-2 (their actual series record vs ATL), OKC leads with .614 TS% on a 4-0 stretch, Phoenix sits at 0-4. These are exactly the kind of trailing-window signals a survivor / spread / total prediction model would consume downstream.
 
 ---
 
@@ -165,7 +187,7 @@ make airflow-down      # stop the stack
 
 - [x] Phase 1 — Core ETL (ingest → transform → S3 write)
 - [x] Phase 2 — Airflow DAG + Docker Compose
-- [ ] Phase 3 — Feature engineering + rolling windows
+- [x] Phase 3 — Feature engineering + rolling windows
 - [ ] Phase 4 — Cloud deploy (EC2/EMR) + IAM hardening
 - [ ] Phase 5 — Docs, demo, CI/CD
 

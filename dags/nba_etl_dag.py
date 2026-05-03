@@ -103,14 +103,27 @@ def _write_processed(ti, **_: object) -> str:
         spark.stop()
 
 
-def _write_features(**_: object) -> None:
-    """Stub for Phase 3 — rolling-window features written to features/."""
-    import logging
+def _write_features(ti, **_: object) -> str:
+    """Read processed history, build 10-game rolling features, write features/."""
+    from etl.features import build_rolling_features
+    from etl.transform import get_spark
+    from etl.write import write_features
 
-    logging.getLogger(__name__).info(
-        "write_features: Phase 3 stub — no-op until rolling features land"
-    )
-    return None
+    processed_uri = ti.xcom_pull(task_ids="write_processed")
+    if not processed_uri:
+        raise RuntimeError("write_processed did not produce a processed_uri")
+
+    s3_bucket = os.environ.get("S3_BUCKET", "")
+
+    spark = get_spark("nba-etl-features")
+    try:
+        # Read the *whole* processed history so the rolling window has data
+        # from prior runs to look back over, not just today's slice.
+        processed_df = spark.read.parquet(processed_uri)
+        features_df = build_rolling_features(processed_df)
+        return write_features(features_df, s3_bucket)
+    finally:
+        spark.stop()
 
 
 def _notify_done(ti, ds: str, **_: object) -> None:
@@ -121,12 +134,14 @@ def _notify_done(ti, ds: str, **_: object) -> None:
     raw_path = ti.xcom_pull(task_ids="ingest_raw")
     staging_uri = ti.xcom_pull(task_ids="transform_and_aggregate")
     processed_uri = ti.xcom_pull(task_ids="write_processed")
+    features_uri = ti.xcom_pull(task_ids="write_features")
     logger.info(
-        "nba_etl_pipeline ds=%s raw=%s staging=%s processed=%s",
+        "nba_etl_pipeline ds=%s raw=%s staging=%s processed=%s features=%s",
         ds,
         raw_path,
         staging_uri,
         processed_uri,
+        features_uri,
     )
 
 

@@ -53,17 +53,18 @@
 ## Phase 3 — Feature Engineering + Rolling Window Stats
 > Goal: Feature layer writes rolling 10-game aggregations to S3 `features/` prefix, ready for prediction models.
 
-- [ ] Implement `etl/features.py`:
-  - [ ] `build_rolling_features(df, window=10)` using PySpark `Window.partitionBy("team_id").orderBy("game_date").rowsBetween(-9, 0)`
-  - [ ] Rolling metrics: `rolling_pts`, `rolling_efg_pct`, `rolling_ts_pct`, `rolling_ast_to_tov`, `rolling_win_pct`
-  - [ ] Output schema in `etl/schema.py`
-- [ ] Extend `etl/write.py`: `write_features()` writes to `features/` prefix partitioned by `season`
-- [ ] Wire `write_features` Airflow task in DAG (replace stub from Phase 2)
-- [ ] Write `tests/test_features.py`: assert rolling values are correct for a known 12-game fixture sequence
-- [ ] Extend `scripts/run_local.py` to include feature build step
-- [ ] Add `home_away_split` rolling metric (separate rolling avg by `is_home`)
-- [ ] Validate output: spot-check a current contender's rolling true-shooting matches their published season trend
-- [ ] Update README output schema table with feature layer columns
+- [x] Implement `etl/features.py`:
+  - [x] `build_rolling_features(df, window=10)` using PySpark `Window.partitionBy("team_id").orderBy("game_date").rowsBetween(-9, 0)`
+  - [x] Rolling metrics: `rolling_pts`, `rolling_efg_pct`, `rolling_ts_pct`, `rolling_ast_to_tov`, `rolling_win_pct`
+  - [x] Output schema in `etl/schema.py`
+- [x] Extend `etl/write.py`: `write_features()` writes to `features/` prefix partitioned by `season`
+- [x] Wire `write_features` Airflow task in DAG (replace stub from Phase 2)
+- [x] Write `tests/test_features.py`: assert rolling values are correct for a known 12-game fixture sequence
+- [x] Extend `scripts/run_local.py` to include feature build step
+- [x] Add `home_away_split` rolling metric (`rolling_pts_home` / `rolling_pts_away`)
+- [x] Validate output: 14-day playoff backfill (4/19→5/2) + patch backfill of 4/18 to capture series openers; NYK row reconciles to 4-2 vs ATL, OKC leads at .614 TS% over a 4-0 stretch
+- [x] Update README output schema table with feature layer columns
+- [x] Bonus fix: set `spark.sql.sources.partitionOverwriteMode=dynamic` in `get_spark()` so daily partitions accumulate during backfills instead of clobbering the whole prefix
 
 ---
 
