@@ -1,33 +1,47 @@
 # nba-parquet
 
-> **Portfolio-grade PySpark ETL pipeline — NBA box scores → S3 Parquet, orchestrated by Airflow.**
+> **A daily PySpark + Airflow pipeline that turns NBA box scores into model-ready trailing-window features.**
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![PySpark](https://img.shields.io/badge/PySpark-3.5-orange?logo=apachespark)
 ![Airflow](https://img.shields.io/badge/Airflow-2.9-017CEE?logo=apacheairflow)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900?logo=amazons3)
+![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
----
+## Demo at a glance
 
-## What It Is
+Validated end-to-end against the 2025–26 NBA playoffs. The leaderboard below was produced by the live pipeline running daily through 2026-05-03, sorted by trailing 10-game true-shooting %:
 
-A production-style batch ETL pipeline that:
-1. **Ingests** NBA box scores via [`nba_api`](https://github.com/swar/nba_api) — pulling completed games for a given date
-2. **Transforms** them with PySpark — engineering team-level per-game stats (eFG%, true shooting, assist:turnover) and rolling 10-game windowed features for downstream prediction models
-3. **Writes** Parquet output to AWS S3 in a partitioned layout (`season/game_date`)
-4. **Orchestrates** all of it with an Apache Airflow 2.9 DAG that runs on a daily schedule, picking up the prior day's games
+![Rolling features leaderboard](demo%20screenshots/thru5_3_26_leaderboard.png)
 
-Built during the 2025–26 NBA playoffs so the pipeline is exercised against **fresh in-season data** every night.
+NYK at 4-2 matches their real series result vs ATL; OKC leads at .614 TS% on a 4-0 stretch; Phoenix sits at 0-4 after a sweep. These are exactly the trailing-window signals a survivor / spread / total prediction model consumes downstream.
 
-## Why It Exists
+## What / Why / How / For Whom
 
-The developer is building sports-analytics tooling and prediction models that rely on aggregated, well-shaped game-level signal. This repo is the data-platform foundation underneath that work: instead of ad-hoc pandas scripts, it's a proper batch pipeline a real analytics team would ship.
+- **What it does.** A daily Airflow DAG ingests NBA box scores from `nba_api`, aggregates them with PySpark into team-game stats (eFG%, true shooting %, AST/TOV, win flag), and writes partitioned Parquet to S3 — then engineers rolling 10-game features (`rolling_ts_pct`, `rolling_win_pct`, home/away split) ready for downstream prediction models.
+- **Why it exists.** Sports-analytics prediction models (survivor pools, spreads, totals) need clean, aggregated, time-windowed signal. This pipeline replaces ad-hoc pandas notebooks with a real data platform: schema-typed, idempotent, partition-aware, daily-orchestrated, retry-safe.
+- **How it's built.** Five-task Airflow DAG (`ingest_raw → transform_and_aggregate → write_processed → write_features → notify_done`), `LocalExecutor` on Postgres, staging-then-promote Parquet writes with **dynamic partition overwrite**, dual-mode destination (S3A or local disk via `LOCAL_OUTPUT_DIR`), and 25 unit tests covering schema, math, partitioning, and DAG load-time guard rails.
+- **For whom.** Sports-analytics teams who want a model-ready feature layer fed nightly; data-engineering hiring managers reviewing portfolio work; future-me who needs to remember why the staging-then-promote pattern is there. Also a reusable template for any "ingest API → transform → partitioned warehouse" use case (NFL, MLB, fantasy, etc.).
 
-It demonstrates three skills that are hard to fake in a portfolio:
-- **Spark** (real transformations on multi-thousand-row box-score data per night, scalable to full-season volumes)
-- **Airflow** (DAG-as-code with task dependencies, XCom, and environment-driven config)
-- **AWS** (S3 writes via Hadoop S3A connector, IAM-safe credential handling)
+## Skills demonstrated
+
+Each row points at a specific file or function so reviewers can verify the claim, not just take my word for it.
+
+| Skill | Where to look |
+|---|---|
+| PySpark `Window` functions over `partitionBy + orderBy + rowsBetween` for trailing-window features | [`etl/features.py`](etl/features.py) |
+| Conditional aggregation within a window (home/away split) | [`etl/features.py`](etl/features.py) `pts_home_only` / `pts_away_only` |
+| Idempotent partitioned Parquet writes via `partitionOverwriteMode=dynamic` | [`etl/transform.py`](etl/transform.py) `get_spark()` |
+| Airflow DAG design with lazy imports, XCom path-passing, `max_active_runs=1`, `catchup=False` | [`dags/nba_etl_dag.py`](dags/nba_etl_dag.py) |
+| Production staging → canonical promotion pattern | DAG `transform_and_aggregate` → `write_processed` tasks |
+| Schema-first ingestion with `StructType` (no `inferSchema=True` on production paths) | [`etl/schema.py`](etl/schema.py), [`etl/ingest.py`](etl/ingest.py) |
+| API rate-limit handling (`stats.nba.com`) | [`etl/ingest.py`](etl/ingest.py) `_rate_limit_sleep` |
+| Real-data correctness reconciliation | Phase 3 commit message — caught NYK 4-2 vs ATL gap, patched with single-day backfill |
+| Docker Compose multi-service stack with single-build-owner pattern (avoids parallel image-export race) | [`infra/docker-compose.yml`](infra/docker-compose.yml) |
+| Custom Airflow image extending `apache/airflow` with OpenJDK 17 for PySpark local mode | [`infra/Dockerfile.airflow`](infra/Dockerfile.airflow) |
+| Static guard-rail tests for DAG hygiene (no heavy module-level imports) | [`tests/test_dag.py`](tests/test_dag.py) |
+| Cross-platform dev (Windows + Linux containers) — bind-mounted code, vendored Hadoop winutils, dual S3/local destination | [`tests/conftest.py`](tests/conftest.py), [`etl/paths.py`](etl/paths.py) |
 
 ---
 
@@ -163,23 +177,18 @@ make airflow-down      # stop the stack
 
 ---
 
-## Demo
+## How the pipeline behaves under load
 
-The pipeline has been validated end-to-end against real 2025–26 NBA playoff data:
+Three more views from the validation run, each showing a different part of the architecture working:
 
-**Per-game ETL (4/29 playoff slate, scripted run):**
+**Per-game ETL — scripted local run for the 4/29 playoff slate.** Proves the schema math (eFG%, TS%, AST/TOV, top scorer per team) holds against real `nba_api` data:
 ![Box-score smoke test](demo%20screenshots/4_29_26_nba_games.png)
 
-**Airflow DAG graph view (autonomous run, all five tasks green):**
+**Airflow DAG graph — five tasks green on an autonomous run** triggered by the scheduler (no manual click):
 ![DAG graph](demo%20screenshots/dag_screenshot.png)
 
-**14-day backfill via `airflow dags backfill 2026-04-19 2026-05-02` — 70/70 task instances succeeded:**
+**14-day playoff backfill via `airflow dags backfill 2026-04-19 2026-05-02`** — 70/70 task instances succeeded, mean run duration 1:11. This is what convinced me dynamic partition overwrite was working: each daily run touched only its own `(season, game_date)` partition without clobbering the rest:
 ![Backfill grid](demo%20screenshots/backfill_success.png)
-
-**Rolling-features leaderboard, sorted by trailing true-shooting % through 5/3:**
-![Rolling features leaderboard](demo%20screenshots/thru5_3_26_leaderboard.png)
-
-The leaderboard cross-reconciles against ESPN: NYK shows 4-2 (their actual series record vs ATL), OKC leads with .614 TS% on a 4-0 stretch, Phoenix sits at 0-4. These are exactly the kind of trailing-window signals a survivor / spread / total prediction model would consume downstream.
 
 ---
 
