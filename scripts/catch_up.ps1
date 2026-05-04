@@ -25,8 +25,8 @@
     cold starts or backfilling a wider window than just yesterday.
 
 .NOTES
-    Uses powershell-native syntax. Tested against Windows PowerShell 5.1
-    + Docker Desktop on Windows 10/11. Run from the repo root.
+    Tested against Windows PowerShell 5.1 + Docker Desktop on Windows 10/11.
+    Run from the repo root.
 #>
 
 [CmdletBinding()]
@@ -46,59 +46,55 @@ function Read-LatestGameDate {
     if (-not (Test-Path $ProcessedDir)) {
         return $null
     }
-    $dirs = Get-ChildItem -Path $ProcessedDir -Filter "game_date=*" -Recurse -Directory `
-        -ErrorAction SilentlyContinue
+    $dirs = Get-ChildItem -Path $ProcessedDir -Filter "game_date=*" -Recurse -Directory -ErrorAction SilentlyContinue
     if (-not $dirs -or $dirs.Count -eq 0) {
         return $null
     }
-    $dates = $dirs | ForEach-Object { $_.Name -replace 'game_date=', '' } |
-        Sort-Object -Unique
-    return [datetime]::ParseExact(($dates | Select-Object -Last 1), 'yyyy-MM-dd', $null)
+    $dates = $dirs | ForEach-Object { $_.Name -replace 'game_date=', '' } | Sort-Object -Unique
+    $newest = $dates | Select-Object -Last 1
+    return [datetime]::ParseExact($newest, 'yyyy-MM-dd', $null)
 }
 
-function Resolve-DateRange {
-    $endTarget = if ($To) {
-        [datetime]::ParseExact($To, 'yyyy-MM-dd', $null)
-    } else {
-        (Get-Date).Date.AddDays(-1)
-    }
-
-    if ($From) {
-        $startTarget = [datetime]::ParseExact($From, 'yyyy-MM-dd', $null)
-    } else {
-        $latest = Read-LatestGameDate
-        if ($null -eq $latest) {
-            Write-Host "No processed/ data found yet (cold start)." -ForegroundColor Yellow
-            Write-Host "Defaulting -From to playoffs start: $PlayoffsStart"
-            $startTarget = [datetime]::ParseExact($PlayoffsStart, 'yyyy-MM-dd', $null)
-        } else {
-            Write-Host "Latest game_date in processed/: $($latest.ToString('yyyy-MM-dd'))"
-            $startTarget = $latest.AddDays(1)
-        }
-    }
-
-    return @{ Start = $startTarget; End = $endTarget }
+# --- Resolve end date ---
+if ($To) {
+    $end = [datetime]::ParseExact($To, 'yyyy-MM-dd', $null)
+} else {
+    $end = (Get-Date).Date.AddDays(-1)
 }
+$endStr = $end.ToString('yyyy-MM-dd')
 
-# --- Main ---
+# --- Resolve start date ---
+if ($From) {
+    $start = [datetime]::ParseExact($From, 'yyyy-MM-dd', $null)
+    Write-Host "Using explicit -From: $From"
+} else {
+    $latest = Read-LatestGameDate
+    if ($null -eq $latest) {
+        Write-Host "No processed/ data found yet (cold start)." -ForegroundColor Yellow
+        Write-Host "Defaulting -From to playoffs start: $PlayoffsStart"
+        $start = [datetime]::ParseExact($PlayoffsStart, 'yyyy-MM-dd', $null)
+    } else {
+        $latestStr = $latest.ToString('yyyy-MM-dd')
+        Write-Host "Latest game_date in processed/: $latestStr"
+        $start = $latest.AddDays(1)
+    }
+}
+$startStr = $start.ToString('yyyy-MM-dd')
 
-$range = Resolve-DateRange
-$start = $range.Start
-$end = $range.End
+Write-Host "Target end (yesterday by default): $endStr"
 
-Write-Host "Target end (yesterday by default): $($end.ToString('yyyy-MM-dd'))"
-
+# --- Short-circuit if already current ---
 if ($start -gt $end) {
     Write-Host ""
-    Write-Host "Already up to date — nothing to backfill." -ForegroundColor Green
+    Write-Host "Already up to date - nothing to backfill." -ForegroundColor Green
     exit 0
 }
 
 $gapDays = ($end - $start).Days + 1
 Write-Host ""
-Write-Host "Backfill range: $($start.ToString('yyyy-MM-dd')) -> $($end.ToString('yyyy-MM-dd')) ($gapDays day(s))." -ForegroundColor Cyan
+Write-Host "Backfill range: $startStr -> $endStr  [$gapDays days]" -ForegroundColor Cyan
 
-# Bring up the stack (idempotent; no-op if already running).
+# --- Bring up the stack (idempotent) ---
 Write-Host ""
 Write-Host "Ensuring Airflow stack is running..."
 docker compose -f $ComposeFile up -d
@@ -108,14 +104,10 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# Trigger the backfill.
+# --- Trigger the backfill ---
 Write-Host ""
 Write-Host "Triggering Airflow backfill..."
-$startStr = $start.ToString('yyyy-MM-dd')
-$endStr = $end.ToString('yyyy-MM-dd')
-
-docker compose -f $ComposeFile exec airflow-scheduler `
-    airflow dags backfill -s $startStr -e $endStr $DagId
+docker compose -f $ComposeFile exec airflow-scheduler airflow dags backfill -s $startStr -e $endStr $DagId
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -124,10 +116,11 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# Confirm new state.
+# --- Confirm new state ---
 $newLatest = Read-LatestGameDate
 Write-Host ""
 Write-Host "Catch-up complete." -ForegroundColor Green
 if ($newLatest) {
-    Write-Host "Latest game_date in processed/ is now: $($newLatest.ToString('yyyy-MM-dd'))" -ForegroundColor Green
+    $newLatestStr = $newLatest.ToString('yyyy-MM-dd')
+    Write-Host "Latest game_date in processed/ is now: $newLatestStr" -ForegroundColor Green
 }
