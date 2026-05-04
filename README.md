@@ -6,7 +6,7 @@
 ![PySpark](https://img.shields.io/badge/PySpark-3.5-orange?logo=apachespark)
 ![Airflow](https://img.shields.io/badge/Airflow-2.9-017CEE?logo=apacheairflow)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900?logo=amazons3)
-![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)
+[![CI](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Demo at a glance
