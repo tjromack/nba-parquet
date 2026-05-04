@@ -129,6 +129,21 @@ make airflow-rebuild   # rebuild the image after editing requirements.txt or Doc
 make airflow-down      # stop the stack
 ```
 
+### Daily catch-up during the season
+
+The DAG is `@daily` with `catchup=False`, so if the scheduler is down at trigger
+time (laptop off, Docker stopped) it won't auto-fill missed days. To stay
+current, run the catch-up helper each morning:
+
+```powershell
+.\scripts\catch_up.ps1
+```
+
+It auto-detects the latest `game_date` partition under `out/processed/`, brings
+up the Airflow stack if needed, and backfills every day from `(latest + 1)` through
+yesterday. Idempotent — safe to re-run any time. Override the range explicitly with
+`-From 2026-04-18 -To 2026-05-15` for cold starts or wider catch-ups.
+
 ---
 
 ## Output Schema
