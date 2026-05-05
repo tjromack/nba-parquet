@@ -49,9 +49,9 @@ Each row points at a specific file or function so reviewers can verify the claim
 
 ```mermaid
 flowchart LR
-    api["stats.nba.com<br/>(nba_api)"]:::ext
+    api[nba_api stats.nba.com]
 
-    subgraph DAG["Airflow @daily DAG · LocalExecutor · max_active_runs=1 · catchup=False"]
+    subgraph DAG[Airflow daily DAG - LocalExecutor]
         direction TB
         t1[ingest_raw]
         t2[transform_and_aggregate]
@@ -61,17 +61,17 @@ flowchart LR
         t1 --> t2 --> t3 --> t4 --> t5
     end
 
-    subgraph LAKE["Parquet zones — partitioned, idempotent (dynamic overwrite)"]
+    subgraph LAKE[Parquet zones - partitioned, idempotent]
         direction TB
-        raw["raw/<br/>27 cols · row = player-game<br/>partition: season, game_date"]
-        stage["staging/<br/>22 cols · row = team-game<br/>partition: run_date"]
-        proc["processed/<br/>22 cols · row = team-game<br/>partition: season, game_date"]
-        feat["features/<br/>13 cols · row = team-game<br/>partition: season"]
+        raw[raw/ - 27 cols - player-game]
+        stage[staging/ - 22 cols - team-game]
+        proc[processed/ - 22 cols - team-game]
+        feat[features/ - 13 cols - rolling]
     end
 
-    model["downstream models<br/>(spread / total / survivor)"]:::down
+    model[downstream models]
 
-    api -->|"0.6s rate-limit between calls"| t1
+    api -->|0.6s rate-limit| t1
     t1 -.->|writes| raw
     raw -.->|reads| t2
     t2 -.->|writes| stage
@@ -79,10 +79,7 @@ flowchart LR
     t3 -.->|writes| proc
     proc -.->|reads| t4
     t4 -.->|writes| feat
-    feat -->|consumed by| model
-
-    classDef ext fill:#0d1117,stroke:#58a6ff,color:#58a6ff,stroke-width:2px
-    classDef down fill:#0d1117,stroke:#7ee787,color:#7ee787,stroke-width:2px
+    feat --> model
 ```
 
 **Schema dimensions at each layer:**
