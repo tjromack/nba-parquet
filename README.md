@@ -47,26 +47,113 @@ Each row points at a specific file or function so reviewers can verify the claim
 
 ## Architecture
 
-```
-nba_api (stats.nba.com)
-      │
-      ▼
-  [ingest.py]  ──→  s3://{BUCKET}/raw/nba/box_scores/season={Y}/game_date={D}/
-      │
-      ▼
-[transform.py] ──→  PySpark aggregations + rolling window features
-      │
-      ├──→  s3://{BUCKET}/processed/nba/team_game_stats/season={Y}/game_date={D}/
-      └──→  s3://{BUCKET}/features/nba/rolling_team_stats/season={Y}/
+```mermaid
+flowchart LR
+    api["stats.nba.com<br/>(nba_api)"]:::ext
 
-All steps wired together in:  dags/nba_etl_dag.py  (Airflow DAG, @daily)
+    subgraph DAG["Airflow @daily DAG · LocalExecutor · max_active_runs=1 · catchup=False"]
+        direction TB
+        t1[ingest_raw]
+        t2[transform_and_aggregate]
+        t3[write_processed]
+        t4[write_features]
+        t5[notify_done]
+        t1 --> t2 --> t3 --> t4 --> t5
+    end
+
+    subgraph LAKE["Parquet zones — partitioned, idempotent (dynamic overwrite)"]
+        direction TB
+        raw["raw/<br/>27 cols · row = player-game<br/>partition: season, game_date"]
+        stage["staging/<br/>22 cols · row = team-game<br/>partition: run_date"]
+        proc["processed/<br/>22 cols · row = team-game<br/>partition: season, game_date"]
+        feat["features/<br/>13 cols · row = team-game<br/>partition: season"]
+    end
+
+    model["downstream models<br/>(spread / total / survivor)"]:::down
+
+    api -->|"0.6s rate-limit between calls"| t1
+    t1 -.->|writes| raw
+    raw -.->|reads| t2
+    t2 -.->|writes| stage
+    stage -.->|reads| t3
+    t3 -.->|writes| proc
+    proc -.->|reads| t4
+    t4 -.->|writes| feat
+    feat -->|consumed by| model
+
+    classDef ext fill:#0d1117,stroke:#58a6ff,color:#58a6ff,stroke-width:2px
+    classDef down fill:#0d1117,stroke:#7ee787,color:#7ee787,stroke-width:2px
 ```
+
+**Schema dimensions at each layer:**
+
+| Layer | Cols | Row grain | Partitioning | Source / produced by |
+|---|---|---|---|---|
+| `raw/` | 27 | one per (player, game) | `season` + `game_date` | `nba_api.BoxScoreTraditionalV2` |
+| `staging/` | 22 | one per (team, game) | `run_date` | `transform_and_aggregate` task (transient) |
+| `processed/` | 22 | one per (team, game) | `season` + `game_date` | `write_processed` task (canonical) |
+| `features/` | 13 | one per (team, game) | `season` | `write_features` task (10-game rolling) |
+
+The staging → processed promotion is a real production pattern: the transform task can fail and retry without ever touching the canonical output, and a successful staging write commits atomically when `write_processed` reads it back and writes the canonical partition. Combined with `partitionOverwriteMode=dynamic`, daily backfills only touch the partitions they own.
+
+---
+
+## Results & Metrics
+
+Numbers from the live pipeline run, accumulated through 2026-05-03 (16 days of 2025–26 NBA playoff data).
+
+### Validation run
+
+| Metric | Value |
+|---|---|
+| Date range covered | 2026-04-18 → 2026-05-03 |
+| Distinct game days ingested | 16 |
+| Games captured | 48 |
+| Unique teams seen | 16 |
+| Raw player-game rows | 1,347 |
+| Processed team-game rows | 96 |
+| Feature rows (rolling) | 96 |
+| Mean rows per game day | 6.0 (range 2–8 depending on slate) |
+| Mean Airflow run duration | 1:11 per day-instance |
+| 14-day backfill total wall-clock | ~16 minutes (sequential, `max_active_runs=1`) |
+| Backfill task instances | 70 / 70 succeeded, 0 failed, 0 retried |
+| Test suite | 25 passed, 1 skipped in 21.7s (zero AWS, zero network access) |
+| Hot path failures during validation | 0 |
+| Real-data correctness regressions caught | 2 (`TO`→`tov` rename, partition-overwrite mode) |
+
+### Top of leaderboard (through 5/3)
+
+Sorted by trailing 10-game true-shooting %:
+
+| Team | games in window | rolling pts | rolling TS% | rolling win% |
+|---|---|---|---|---|
+| OKC | 4 | 122.75 | .614 | 1.000 |
+| NYK | 6 | 117.83 | .609 | .667 |
+| SAS | 5 | 112.40 | .596 | .800 |
+
+OKC's .614 TS% on a 4-0 stretch is exactly the trailing-window signal a survivor / spread / total prediction model would weight heavily. NYK's 4-2 over six games matches their actual round-1 series result vs ATL — cross-reconciles against the public schedule, not just internally.
 
 ---
 
 ## Quick Start
 
-### Prerequisites
+### Verify in 60 seconds (no AWS, no Docker, no `.env`)
+
+Three commands and a green test suite — designed for reviewers who want to confirm the project actually works before reading further:
+
+```bash
+git clone https://github.com/tjromack/nba-parquet.git
+cd nba-parquet
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/ -m "not integration"
+# expected: 25 passed, 1 skipped in ~22s
+```
+
+The full 25-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
+
+### Full setup — running the pipeline
+
+#### Prerequisites
 - Python 3.11+
 - Docker + Docker Compose (for Airflow)
 - Java 11+ (for PySpark local mode)
