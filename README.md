@@ -9,6 +9,8 @@
 [![CI](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+> 📋 **Need to explain this project to someone?** See [`docs/PROJECT_QA.md`](docs/PROJECT_QA.md) — the same six questions answered in both technical and layman terms, plus 30-second / 2-minute / 30-minute pitches.
+
 ## Demo at a glance
 
 Validated end-to-end against the 2025–26 NBA playoffs. The leaderboard below was produced by the live pipeline running daily through 2026-05-03, sorted by trailing 10-game true-shooting %:

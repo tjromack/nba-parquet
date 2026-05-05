@@ -20,4 +20,6 @@ derby.log
 out/
 infra/airflow.env
 notebooks/
-docs/
+# docs/ is intentionally tracked — holds PROJECT_QA.md and any human-authored
+# reference docs. (Auto-generated docs would be a separate concern; nothing
+# generates into docs/ today.)
