@@ -48,11 +48,10 @@ Each row points at a specific file or function so reviewers can verify the claim
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     api[nba_api stats.nba.com]
 
-    subgraph DAG[Airflow daily DAG - LocalExecutor]
-        direction TB
+    subgraph DAG[Airflow daily DAG]
         t1[ingest_raw]
         t2[transform_and_aggregate]
         t3[write_processed]
@@ -61,12 +60,11 @@ flowchart LR
         t1 --> t2 --> t3 --> t4 --> t5
     end
 
-    subgraph LAKE[Parquet zones - partitioned, idempotent]
-        direction TB
-        raw[raw/ - 27 cols - player-game]
-        stage[staging/ - 22 cols - team-game]
-        proc[processed/ - 22 cols - team-game]
-        feat[features/ - 13 cols - rolling]
+    subgraph LAKE[Parquet zones]
+        raw[raw/]
+        stage[staging/]
+        proc[processed/]
+        feat[features/]
     end
 
     model[downstream models]
@@ -81,6 +79,8 @@ flowchart LR
     t4 -.->|writes| feat
     feat --> model
 ```
+
+Column counts, row grain, and partitioning for each zone live in the schema table immediately below — no need to repeat them on the diagram.
 
 **Schema dimensions at each layer:**
 
