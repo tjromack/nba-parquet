@@ -10,6 +10,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > 📋 **Need to explain this project to someone?** See [`docs/PROJECT_QA.md`](docs/PROJECT_QA.md) — the same six questions answered in both technical and layman terms, plus 30-second / 2-minute / 30-minute pitches.
+>
+> 🎤 **Interview prep**: [`docs/PORTFOLIO_ANECDOTES.md`](docs/PORTFOLIO_ANECDOTES.md) collects real moments from building this — retry recovery, a column-name regression, ESPN reconciliation, the Docker parallel-build race fix — each one a calibrated 30-second story.
 
 ## Demo at a glance
 
@@ -227,8 +229,20 @@ current, run the catch-up helper each morning:
 
 It auto-detects the latest `game_date` partition under `out/processed/`, brings
 up the Airflow stack if needed, and backfills every day from `(latest + 1)` through
-yesterday. Idempotent — safe to re-run any time. Override the range explicitly with
-`-From 2026-04-18 -To 2026-05-15` for cold starts or wider catch-ups.
+yesterday. Idempotent — safe to re-run any time.
+
+If a previous run crashed and left a DagRun stuck in `running` state (which would
+block new runs because of `max_active_runs=1`), pass `-CleanStale` to auto-mark
+the stale runs failed via Airflow's REST API before submitting work:
+
+```powershell
+.\scripts\catch_up.ps1 -CleanStale
+```
+
+Override the range explicitly with `-From 2026-04-18 -To 2026-05-15` for cold
+starts or wider catch-ups. Default `-CleanStale` is off — the script warns
+and exits with instructions if it detects stale runs without the flag, so
+you don't accidentally clobber a legitimate-but-slow run.
 
 ---
 
