@@ -12,6 +12,8 @@
 > 📋 **Need to explain this project to someone?** See [`docs/PROJECT_QA.md`](docs/PROJECT_QA.md) — the same six questions answered in both technical and layman terms, plus 30-second / 2-minute / 30-minute pitches.
 >
 > 🎤 **Interview prep**: [`docs/PORTFOLIO_ANECDOTES.md`](docs/PORTFOLIO_ANECDOTES.md) collects real moments from building this — retry recovery, a column-name regression, ESPN reconciliation, the Docker parallel-build race fix — each one a calibrated 30-second story.
+>
+> 📊 **Live dashboard**: `streamlit run streamlit_app.py` reads the pipeline's output directly and surfaces a leaderboard, per-team rolling trends, head-to-head comparisons, and a filterable data explorer. See the [Live dashboard](#live-dashboard) section below.
 
 ## Demo at a glance
 
@@ -243,6 +245,49 @@ Override the range explicitly with `-From 2026-04-18 -To 2026-05-15` for cold
 starts or wider catch-ups. Default `-CleanStale` is off — the script warns
 and exits with instructions if it detects stale runs without the flag, so
 you don't accidentally clobber a legitimate-but-slow run.
+
+---
+
+## Live dashboard
+
+A Streamlit app reads the pipeline's `processed/` and `features/` Parquet zones
+directly and exposes four views:
+
+- **Leaderboard** — latest rolling-feature snapshot per team, sorted by trailing
+  TS%, with color gradients on TS% and win rate so hot/cold teams pop at a glance
+- **Team detail** — pick any team, see their rolling pts / TS% / win rate over
+  time as line charts, plus a sortable game-by-game results table
+- **Head-to-head** — pick any two teams, get a side-by-side metric comparison
+  plus their rolling-window trajectories overlaid
+- **Data explorer** — filterable view of the raw processed layer for spot-checks
+  against external sources like ESPN
+
+### Run it locally
+
+```powershell
+# from the repo root, with .venv activated and pipeline data in ./out/
+streamlit run streamlit_app.py
+```
+
+Streamlit opens at http://localhost:8501. The app reads from
+`$env:LOCAL_OUTPUT_DIR` if set, otherwise falls back to `./out` — same env-var
+contract as the pipeline itself, so whatever data the most recent
+`scripts/run_local.py` or `scripts/catch_up.ps1` invocation produced is
+immediately visible.
+
+### Deploying publicly (optional)
+
+Streamlit Cloud (https://streamlit.io/cloud) hosts apps from public GitHub repos
+on a free tier. To deploy this app there:
+
+1. Make the repo public (or use a Streamlit Cloud paid tier for private repos)
+2. Bundle a snapshot of `out/processed/` and `out/features/` into the repo so
+   the cloud-hosted app has data to render (current `out/` is gitignored)
+3. Connect the repo at https://share.streamlit.io and point at
+   `streamlit_app.py`
+
+For now the app is local-run only — pairing the live pipeline output with a
+public dashboard is a Phase 4-adjacent decision (involves data publication).
 
 ---
 
