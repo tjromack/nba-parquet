@@ -106,8 +106,9 @@ if view == "Leaderboard":
     st.title("Leaderboard — trailing 10-game window")
     st.caption(
         "Latest snapshot per team, sorted by rolling true-shooting %. "
-        "Color gradients on TS% (green) and win% (blue) make the hot/cold "
-        "teams pop at a glance."
+        "Inline bars on TS% (green) and win% (blue) scale to the leader of "
+        "each column, so the gap between the top team and the rest is "
+        "visible at a glance."
     )
 
     snap = latest_snapshot(features)
@@ -137,9 +138,12 @@ if view == "Leaderboard":
         ]
     ]
 
+    # Inline bars on TS% and win% scale to each column's actual min/max,
+    # so the visually-leading team has the longest bar. Pure CSS — avoids
+    # the matplotlib dependency that .background_gradient() pulls in.
     st.dataframe(
-        snap_display.style.background_gradient(subset=["TS%"], cmap="Greens")
-        .background_gradient(subset=["win%"], cmap="Blues")
+        snap_display.style.bar(subset=["TS%"], color="#2e8b57")
+        .bar(subset=["win%"], color="#3a7ca5")
         .format(
             {
                 "pts": "{:.1f}",
