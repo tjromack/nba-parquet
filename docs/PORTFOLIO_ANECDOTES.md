@@ -121,6 +121,34 @@ Each anecdote follows the same five-field shape:
   — `airflow-init` has the `build:` block; `airflow-webserver` and
   `airflow-scheduler` use `pull_policy: never`.
 
+### Designed an operational playbook that survived real-world failure modes
+
+- **When**: Throughout the 2025–26 NBA postseason (April 18 onward)
+- **What happened**: I committed to running this pipeline daily against
+  fresh data for the duration of the playoffs — not as a one-off demo but
+  as a real operational obligation. Over the first ~3 weeks of operation
+  the pipeline survived: a transient `nba_api` failure (auto-recovered via
+  retry policy), a Docker Desktop crash mid-backfill (recovered by
+  restarting the stack and using the UI to mark the orphaned DagRun
+  failed), a stale-DagRun blocking pattern that bit twice (eventually
+  automated away with the `-CleanStale` flag in `catch_up.ps1`), and a
+  one-day backfill-window gap caught only by manual reconciliation
+  against ESPN. End result: 116 team-game rows accumulated across 21
+  distinct game dates, zero data loss, zero unsynced days at any point
+  after a catch-up.
+- **What it demonstrates**: The difference between "I built a pipeline"
+  and "I built a pipeline I actually run." Most portfolio data
+  engineering stops at the first one — the second exposes failure modes
+  you only learn by living with the system. Each of those failure modes
+  produced a fix that's still in the codebase: dynamic partition
+  overwrite, the retry policy, single-build-owner Docker pattern,
+  `-CleanStale` automation, and the catch-up script's auto-gap detection.
+- **Where to look**: [`scripts/catch_up.ps1`](../scripts/catch_up.ps1) is
+  the single command that operationalizes this; the README's "Daily
+  catch-up during the season" section is the runbook;
+  `demo screenshots/backfill_success.png` shows what 70 / 70 task
+  instances green looks like when the system is healthy.
+
 ### Built a self-healing daily catch-up script after hitting the same `max_active_runs` wall twice
 
 - **When**: After Phase 3, during ongoing daily ops
