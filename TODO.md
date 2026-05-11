@@ -118,6 +118,36 @@
 
 ## Backlog / future ideas (not phased, just parked)
 
+### Phase 4b — Prediction model (the project's stated raison d'être)
+
+The features layer was built to feed a downstream prediction model. Closing the
+loop is what turns this from "I built a feature store" into "I built a feature
+store and the model that consumes it." Bigger lift than a single session
+(weekend-scale), so parking until ready.
+
+- [ ] `models/spread_predictor.py` — read `features/`, join to actual game
+  outcomes (winner, point margin, total points), train an xgboost or
+  sklearn regressor
+- [ ] Time-series cross-validation (train on weeks 1–2, test on week 3, etc.)
+  to avoid leaking future games into training
+- [ ] **MLflow** experiment tracking so model versions and metrics are
+  reproducible and portfolio-visible
+- [ ] New `streamlit_app.py` view: "Tomorrow's predictions" — model output
+  for upcoming games with the rolling features that drove each prediction
+- [ ] Optional `notebooks/model_eval.ipynb` — calibration plot, feature
+  importance chart, error analysis by team / situation
+
+### Streamlit Cloud public deployment (deferred)
+
+The local-run model (`streamlit run streamlit_app.py`, screen-share in
+meetings) is genuinely fine for the current "personal dev + occasional show
+during calls" use case. Deferred until: (a) repo goes public, AND
+(b) a snapshot of `out/processed/` + `out/features/` is bundled into the
+repo so the cloud-hosted app has data to render, OR (c) we hook the
+dashboard up to a real S3 bucket with daily writes.
+
+### Other parked ideas
+
 - LocalStack integration test that runs the DAG end-to-end against a fake S3 (`pytest -m integration`) — proves the S3A code path works without a real AWS account
 - Switch raw layer from `BoxScoreTraditionalV2` to `BoxScoreAdvancedV2` for additional advanced metrics (offensive rating, defensive rating, pace) → more model-ready features
 - Player-level rolling features (next to team-level): trailing pts/reb/ast per player for usage / minutes models

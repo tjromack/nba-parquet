@@ -17,11 +17,11 @@
 
 ## Demo at a glance
 
-Validated end-to-end against the 2025–26 NBA playoffs. The leaderboard below was produced by the live pipeline running daily through 2026-05-03, sorted by trailing 10-game true-shooting %:
+Validated end-to-end against the 2025–26 NBA playoffs. The leaderboard below is the live Streamlit dashboard reading directly off the pipeline's `features/` Parquet zone, sorted by trailing 10-game true-shooting %. Inline bars on TS% and win rate scale to the column leader so the gap between the top team and the rest is visible at a glance:
 
-![Rolling features leaderboard](demo%20screenshots/thru5_3_26_leaderboard.png)
+![Live Streamlit leaderboard](demo%20screenshots/Leaderboard_51126.png)
 
-NYK at 4-2 matches their real series result vs ATL; OKC leads at .614 TS% on a 4-0 stretch; Phoenix sits at 0-4 after a sweep. These are exactly the trailing-window signals a survivor / spread / total prediction model consumes downstream.
+OKC's perfect win rate over a 6-game stretch and NYK's 9-game .622 efficiency lead the field; cross-checks against ESPN confirm the row counts and series records match reality. These are exactly the trailing-window signals a survivor / spread / total prediction model would consume downstream.
 
 ## What / Why / How / For Whom
 
