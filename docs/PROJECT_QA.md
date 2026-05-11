@@ -81,7 +81,7 @@ on S3) — that are hard to fake without an actual working artifact.
 2. **It proves I can do this kind of work.** A lot of data-engineering job
    postings ask for experience with Spark, Airflow, and AWS S3. Talking about
    those is one thing; pointing at a working repo with a green CI badge, a
-   real architecture diagram, and 16+ days of validated NBA data flowing
+   real architecture diagram, and three+ weeks of validated NBA data flowing
    through it is a much stronger answer.
 
 ---

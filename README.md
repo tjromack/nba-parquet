@@ -103,38 +103,37 @@ The staging → processed promotion is a real production pattern: the transform 
 
 ## Results & Metrics
 
-Numbers from the live pipeline run, accumulated through 2026-05-03 (16 days of 2025–26 NBA playoff data).
+Numbers from the live pipeline run, accumulated through 2026-05-10 (23 days of 2025–26 NBA playoff data — round 1 + conference semifinals in progress).
 
 ### Validation run
 
 | Metric | Value |
 |---|---|
-| Date range covered | 2026-04-18 → 2026-05-03 |
-| Distinct game days ingested | 16 |
-| Games captured | 48 |
+| Date range covered | 2026-04-18 → 2026-05-10 |
+| Distinct game days ingested | 23 |
+| Games captured | 62 |
 | Unique teams seen | 16 |
-| Raw player-game rows | 1,347 |
-| Processed team-game rows | 96 |
-| Feature rows (rolling) | 96 |
-| Mean rows per game day | 6.0 (range 2–8 depending on slate) |
+| Processed team-game rows | 124 |
+| Feature rows (rolling) | 124 |
+| Mean rows per game day | ~5.4 (range 2–8 depending on slate) |
 | Mean Airflow run duration | 1:11 per day-instance |
 | 14-day backfill total wall-clock | ~16 minutes (sequential, `max_active_runs=1`) |
-| Backfill task instances | 70 / 70 succeeded, 0 failed, 0 retried |
-| Test suite | 25 passed, 1 skipped in 21.7s (zero AWS, zero network access) |
-| Hot path failures during validation | 0 |
+| Backfill task instances (initial) | 70 / 70 succeeded, 0 failed, 0 retried |
+| Test suite | 29 passed, 1 skipped in ~22s (zero AWS, zero network access) |
+| Hot path failures during ongoing daily ops | 1 transient `nba_api` blip auto-recovered via retry policy |
 | Real-data correctness regressions caught | 2 (`TO`→`tov` rename, partition-overwrite mode) |
 
-### Top of leaderboard (through 5/3)
+### Top of leaderboard (through 5/10)
 
 Sorted by trailing 10-game true-shooting %:
 
 | Team | games in window | rolling pts | rolling TS% | rolling win% |
 |---|---|---|---|---|
-| OKC | 4 | 122.75 | .614 | 1.000 |
-| NYK | 6 | 117.83 | .609 | .667 |
-| SAS | 5 | 112.40 | .596 | .800 |
+| NYK | 10 | 120.4 | .630 | .800 |
+| OKC | 7 | 122.1 | .628 | 1.000 |
+| SAS | 9 | 113.4 | .588 | .667 |
 
-OKC's .614 TS% on a 4-0 stretch is exactly the trailing-window signal a survivor / spread / total prediction model would weight heavily. NYK's 4-2 over six games matches their actual round-1 series result vs ATL — cross-reconciles against the public schedule, not just internally.
+NYK is the first team to hit a full 10-game window — and they're shooting .630 TS% over an 8-2 stretch, the kind of trailing signal a survivor / spread / total prediction model would weight heavily. OKC's still perfect at 7-0 but with a slightly thinner sample. Cross-checks against ESPN — series records and game counts reconcile exactly.
 
 ---
 

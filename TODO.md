@@ -1,17 +1,31 @@
 # TODO.md — Phased Build Plan
 
-## Status snapshot (as of 2026-05-03)
+## Status snapshot (as of 2026-05-10)
 
 | Phase | State | Commit |
 |---|---|---|
 | **Phase 1 — Core ETL** | ✅ shipped | [`f51d0bb`](https://github.com/tjromack/nba-parquet/commit/f51d0bb) |
 | **Phase 2 — Airflow DAG + Docker Compose** | ✅ shipped | [`46377d1`](https://github.com/tjromack/nba-parquet/commit/46377d1) |
 | **Phase 3 — Rolling features + dynamic partition overwrite** | ✅ shipped | [`efa1c3b`](https://github.com/tjromack/nba-parquet/commit/efa1c3b) |
-| Phase 4 — Real AWS deploy | ⏳ optional | — |
-| Phase 5 — CI / portfolio polish / ship-it | ⏳ next | — |
+| Phase 4 — Real AWS deploy | ⏳ optional, low priority | — |
+| **Phase 4b — Prediction model** (parked) | ⏳ next major lift | see Backlog |
+| **Phase 5 — Polish / CI / docs / dashboard** | ✅ mostly shipped | multiple commits, see below |
 
-**Test gate**: 25 passed, 1 skipped (Airflow-load test runs only when `apache-airflow` is installed locally).
-**Real-data validation**: 92 team-game rows from 15 days of 2025–26 playoff data (4/18 → 5/2). Cross-reconciles to ESPN — NYK 4-2 vs ATL, OKC 4-0 with .614 TS%, PHX 0-4.
+**Phase 5 sub-status:**
+- ✅ GitHub Actions CI (`eb71ac2`) — lint + tests + Docker build verify on every push
+- ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`) — 4 views, reads live pipeline output
+- ✅ `docs/PROJECT_QA.md` (`b379be4`) — technical + layman Q&A reference
+- ✅ `docs/PORTFOLIO_ANECDOTES.md` (`62f5dd2`, `d728aab`) — interview-ready story bank
+- ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-in-60s
+- ✅ Daily catch-up automation (`812ba6c`, `62f5dd2`) — `scripts/catch_up.ps1` with `-CleanStale`
+- ⏳ `notebooks/exploratory_eda.ipynb` — narrative companion to Streamlit
+- ⏳ `docs/architecture.md` + `docs/runbook.md` — written-out playbook
+- ⏳ Tag `v1.0.0` release
+- ⏳ LinkedIn / portfolio post
+
+**Test gate**: 29 passed, 1 skipped in ~22s (Airflow-load test runs only when `apache-airflow` is installed locally).
+**Real-data validation**: 124 team-game rows from 23 distinct game dates (62 games captured), 2026-04-18 → 2026-05-10. Cross-reconciles to ESPN — NYK 8-2 over their last 10 with .630 TS%, OKC perfect 7-0 with .628 TS%, PHX 0-4 swept in round 1.
+**Operational milestone**: pipeline has run daily through the 2025–26 NBA playoffs with zero data loss across three+ weeks; one transient `nba_api` blip was auto-recovered via Airflow's retry policy.
 
 ---
 
@@ -100,19 +114,28 @@
 
 ---
 
-## Phase 5 — Docs, CI, Demo, Ship It — ⏳ next
+## Phase 5 — Docs, CI, Demo, Ship It — ✅ mostly shipped
 > Goal: Repo is portfolio-ready, discoverable, and demo-able without running any code.
 
-- [ ] **Top-of-README rewrite**: 60-second elevator pitch — what it does, why it exists, who it's for. Lead with the leaderboard screenshot, then architecture, then schema. Optimize for a recruiter who lands on the GitHub page and has 30 seconds before deciding whether to read further.
-- [ ] **GitHub Actions CI** (`.github/workflows/ci.yml`): runs `pytest -m "not integration"` + `ruff` + `black --check` on every push to `main`. Adds a green "tests passing" badge — proves the suite runs anywhere, not just on my machine.
-- [ ] **`docs/SKILLS_DEMONSTRATED.md`** (or merge into README): one-line mappings from project artifact → data-engineering competency, e.g. "Window functions over partitionBy → see [etl/features.py:21](etl/features.py)". Gives interviewers concrete file references for talking points.
-- [ ] **`docs/architecture.md`**: ASCII / Mermaid diagram of the data lineage (nba_api → raw → staging → processed → features), task DAG, container topology, S3 prefix layout
-- [ ] **`docs/data_dictionary.md`**: field-by-field column docs for raw / processed / features schemas with example values
-- [ ] **`docs/runbook.md`**: how to re-trigger a single date, how to backfill a range, how to debug a failed task, how to switch destinations (local → LocalStack → real S3)
-- [ ] **`notebooks/exploratory_eda.ipynb`**: pandas read of the features Parquet + one matplotlib chart of rolling TS% trajectory for the top 4 contenders. Visual storytelling that the screenshots can't.
-- [ ] **`CONTRIBUTING.md`**: how to add a new data source (NFL, MLB) following the existing ingest → transform → write pattern
-- [ ] **Tag `v1.0.0` release** on GitHub
-- [ ] **LinkedIn / portfolio post** with the leaderboard screenshot, the DAG graph, and one observation from the data ("NYK and OKC are the only teams shooting above .60 TS% through round 1 — here's the pipeline that surfaced that")
+- [x] **Top-of-README rewrite** (`1cb1438`): 60-second elevator pitch — tagline, demo screenshot, What/Why/How/For-Whom block, Skills Demonstrated table with file refs.
+- [x] **GitHub Actions CI** (`eb71ac2`): `.github/workflows/ci.yml` runs `pytest` + `ruff` + `black --check` + Docker image build on every push to `main`. Green "CI passing" badge in README.
+- [x] **Skills demonstrated table** (`1cb1438`): embedded in README rather than its own file. 12-row table mapping competencies to clickable file references.
+- [x] **Mermaid architecture diagram** (`011c7c3`, `883ced5`): renders natively on GitHub, shows data flow + DAG + zones in one TD layout.
+- [x] **`docs/PROJECT_QA.md`** (`b379be4`): technical + layman Q&A reference, six questions + tiered pitches (30 sec / 2 min / 30 min).
+- [x] **`docs/PORTFOLIO_ANECDOTES.md`** (`62f5dd2`, `d728aab`): seven interview-ready stories with headline / when / what / demonstrates / where-to-look format.
+- [x] **`scripts/catch_up.ps1`** (`812ba6c`, `545fd3c`, `62f5dd2`): self-healing daily catch-up with `-CleanStale` flag for stuck-DagRun recovery.
+- [x] **Streamlit dashboard** (`ff0e222`, polish `e70c0c2`): four views (Leaderboard, Team detail, Head-to-head, Data explorer) reading live pipeline output.
+- [x] **Results & Metrics** section in README (`1ba21a1`): concrete numbers from the validation run + top-of-leaderboard table.
+
+Phase 5 leftovers (not blocking; do as energy allows):
+
+- [ ] **`docs/architecture.md`**: longer-form architecture writeup — what's in the README is already sufficient for most readers, this would only matter if someone really wants depth
+- [ ] **`docs/data_dictionary.md`**: field-by-field column docs with example values
+- [ ] **`docs/runbook.md`**: operational playbook (how to re-trigger a single date, debug a failed task, switch destinations)
+- [ ] **`notebooks/exploratory_eda.ipynb`**: pandas read + matplotlib chart of rolling TS% trajectory for the top 4 contenders. Visual storytelling that complements Streamlit (static, embedded in repo for browse-without-running).
+- [ ] **`CONTRIBUTING.md`**: how to add a new data source (NFL, MLB) following the ingest → transform → write pattern
+- [ ] **Tag `v1.0.0` release** on GitHub once any of the above ship that you want as the "v1 line"
+- [ ] **LinkedIn / portfolio post** with the leaderboard screenshot, the DAG graph, and one observation from the data
 
 ---
 

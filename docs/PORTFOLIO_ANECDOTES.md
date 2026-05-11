@@ -126,16 +126,16 @@ Each anecdote follows the same five-field shape:
 - **When**: Throughout the 2025–26 NBA postseason (April 18 onward)
 - **What happened**: I committed to running this pipeline daily against
   fresh data for the duration of the playoffs — not as a one-off demo but
-  as a real operational obligation. Over the first ~3 weeks of operation
+  as a real operational obligation. Over the first ~3+ weeks of operation
   the pipeline survived: a transient `nba_api` failure (auto-recovered via
   retry policy), a Docker Desktop crash mid-backfill (recovered by
   restarting the stack and using the UI to mark the orphaned DagRun
   failed), a stale-DagRun blocking pattern that bit twice (eventually
   automated away with the `-CleanStale` flag in `catch_up.ps1`), and a
   one-day backfill-window gap caught only by manual reconciliation
-  against ESPN. End result: 116 team-game rows accumulated across 21
-  distinct game dates, zero data loss, zero unsynced days at any point
-  after a catch-up.
+  against ESPN. End result through 2026-05-10: **124 team-game rows
+  across 23 distinct game dates (62 games captured), zero data loss, zero
+  unsynced days** at any point after a catch-up.
 - **What it demonstrates**: The difference between "I built a pipeline"
   and "I built a pipeline I actually run." Most portfolio data
   engineering stops at the first one — the second exposes failure modes
