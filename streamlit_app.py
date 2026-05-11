@@ -21,8 +21,10 @@ Set ``LOCAL_OUTPUT_DIR`` to point at a different data root::
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -59,6 +61,25 @@ def latest_snapshot(features: pd.DataFrame) -> pd.DataFrame:
     return latest.sort_values("rolling_ts_pct", ascending=False).reset_index(drop=True)
 
 
+def latest_data_timestamp() -> datetime | None:
+    """Most recent parquet file mtime under the processed prefix, or None."""
+    if not PROCESSED_PATH.exists():
+        return None
+    parquet_files = list(PROCESSED_PATH.rglob("*.parquet"))
+    if not parquet_files:
+        return None
+    return datetime.fromtimestamp(max(f.stat().st_mtime for f in parquet_files))
+
+
+def _color_wl(val: str) -> str:
+    """Cell-level color for W/L tokens. Used by Styler.map on the games table."""
+    if val == "W":
+        return "background-color: #1f4d2e; color: #b6e6c5; font-weight: 600"
+    if val == "L":
+        return "background-color: #4d1f1f; color: #e6b6b6; font-weight: 600"
+    return ""
+
+
 # --- Sidebar ---
 
 st.sidebar.title("🏀 nba-parquet")
@@ -87,6 +108,10 @@ date_range_str = (
     f" → {processed['game_date'].max().strftime('%m/%d')}"
 )
 st.sidebar.metric("Date range", date_range_str)
+
+_ts = latest_data_timestamp()
+if _ts is not None:
+    st.sidebar.caption(f"Data last refreshed: **{_ts.strftime('%Y-%m-%d %H:%M')}**")
 
 view = st.sidebar.radio(
     "View",
@@ -170,10 +195,18 @@ if view == "Leaderboard":
 elif view == "Team detail":
     st.title("Team detail")
 
-    team = st.selectbox(
-        "Team",
-        sorted(features["team_abbreviation"].unique()),
+    # Default to the team currently leading by trailing TS% — the most
+    # interesting first impression vs. landing on alphabetical-first.
+    team_options = sorted(features["team_abbreviation"].unique())
+    snap = latest_snapshot(features)
+    if snap.empty:
+        default_team = team_options[0]
+    else:
+        default_team = snap.iloc[0]["team_abbreviation"]
+    default_idx = (
+        team_options.index(default_team) if default_team in team_options else 0
     )
+    team = st.selectbox("Team", team_options, index=default_idx)
     team_features = features[features["team_abbreviation"] == team].sort_values(
         "game_date"
     )
@@ -226,8 +259,16 @@ elif view == "Team detail":
         }
     )
     games["game_date"] = games["game_date"].dt.strftime("%Y-%m-%d")
+    games["win"] = games["win"].map({True: "W", False: "L"})
+    games = games.sort_values("game_date", ascending=False)
     st.dataframe(
-        games.sort_values("game_date", ascending=False),
+        games.style.map(_color_wl, subset=["win"]).format(
+            {
+                "eFG%": "{:.3f}",
+                "TS%": "{:.3f}",
+                "AST/TOV": "{:.2f}",
+            }
+        ),
         use_container_width=True,
         hide_index=True,
     )
@@ -294,23 +335,47 @@ elif view == "Head-to-head":
     a_traj = features[features["team_abbreviation"] == team_a].sort_values("game_date")
     b_traj = features[features["team_abbreviation"] == team_b].sort_values("game_date")
 
-    ts_overlay = pd.DataFrame(
-        {
-            f"{team_a} TS%": a_traj.set_index("game_date")["rolling_ts_pct"],
-            f"{team_b} TS%": b_traj.set_index("game_date")["rolling_ts_pct"],
-        }
-    )
-    st.caption("Rolling true-shooting %")
-    st.line_chart(ts_overlay, height=280)
+    # Stack the two teams into one long-format DataFrame, then let Altair
+    # encode `team` as the color channel. Locking y-axis domains makes
+    # the comparison fair across renders — switching teams won't auto-
+    # rescale and silently mislead about magnitude.
+    def _trajectory_chart(metric: str, title: str, ymin: float, ymax: float):
+        combined = pd.concat(
+            [
+                a_traj[["game_date", metric]].assign(team=team_a),
+                b_traj[["game_date", metric]].assign(team=team_b),
+            ],
+            ignore_index=True,
+        )
+        return (
+            alt.Chart(combined)
+            .mark_line(point=True, strokeWidth=2.5)
+            .encode(
+                x=alt.X("game_date:T", title="Game date"),
+                y=alt.Y(
+                    f"{metric}:Q",
+                    title=title,
+                    scale=alt.Scale(domain=[ymin, ymax]),
+                ),
+                color=alt.Color("team:N", title="Team"),
+                tooltip=[
+                    alt.Tooltip("game_date:T", title="Date"),
+                    alt.Tooltip("team:N", title="Team"),
+                    alt.Tooltip(f"{metric}:Q", title=title, format=".3f"),
+                ],
+            )
+            .properties(height=280)
+            .interactive()
+        )
 
-    win_overlay = pd.DataFrame(
-        {
-            f"{team_a} win%": a_traj.set_index("game_date")["rolling_win_pct"],
-            f"{team_b} win%": b_traj.set_index("game_date")["rolling_win_pct"],
-        }
+    st.altair_chart(
+        _trajectory_chart("rolling_ts_pct", "Rolling TS%", 0.40, 0.70),
+        use_container_width=True,
     )
-    st.caption("Rolling win rate")
-    st.line_chart(win_overlay, height=280)
+    st.altair_chart(
+        _trajectory_chart("rolling_win_pct", "Rolling win rate", 0.0, 1.0),
+        use_container_width=True,
+    )
 
 elif view == "Data explorer":
     st.title("Data explorer — processed layer")
