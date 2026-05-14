@@ -17,11 +17,11 @@
 
 ## Demo at a glance
 
-Validated end-to-end against the 2025–26 NBA playoffs. The leaderboard below is the live Streamlit dashboard reading directly off the pipeline's `features/` Parquet zone, sorted by trailing 10-game true-shooting %. Inline bars on TS% and win rate scale to the column leader so the gap between the top team and the rest is visible at a glance:
+Validated end-to-end against the 2025–26 NBA playoffs. The Streamlit dashboard below reads directly off the pipeline's `features/` Parquet zone, sorted by trailing 10-game true-shooting %. Inline bars scale to the column leader so the gap between the top team and the rest is visible at a glance, and an auto-generated "What's notable" callout summarizes the current state (leader, undefeated/winless, eliminated teams) in plain language. The `status` column color-codes each team as **ACTIVE** (green) or **OUT** (red) based on series elimination state:
 
-![Live Streamlit leaderboard](demo%20screenshots/Leaderboard_51126.png)
+![Live Streamlit leaderboard with series tracking](demo%20screenshots/Leaderboard_51426.png)
 
-OKC's perfect win rate over a 6-game stretch and NYK's 9-game .622 efficiency lead the field; cross-checks against ESPN confirm the row counts and series records match reality. These are exactly the trailing-window signals a survivor / spread / total prediction model would consume downstream.
+Through 2026-05-13 (conference semifinals): NYK leads at .630 TS% over a full 10-game window (8-2 stretch), OKC is undefeated at 8-0 with .628 TS%, SAS sits at .591 over 10 games. Ten teams already eliminated, six still active. Cross-checks against ESPN confirm series records and game counts reconcile exactly. These are the trailing-window signals a survivor / spread / total prediction model would consume downstream.
 
 ## What / Why / How / For Whom
 
@@ -103,37 +103,38 @@ The staging → processed promotion is a real production pattern: the transform 
 
 ## Results & Metrics
 
-Numbers from the live pipeline run, accumulated through 2026-05-10 (23 days of 2025–26 NBA playoff data — round 1 + conference semifinals in progress).
+Numbers from the live pipeline run, accumulated through 2026-05-13 (26 days of 2025–26 NBA playoff data — round 1 complete, conference semifinals in progress).
 
 ### Validation run
 
 | Metric | Value |
 |---|---|
-| Date range covered | 2026-04-18 → 2026-05-10 |
-| Distinct game days ingested | 23 |
-| Games captured | 62 |
+| Date range covered | 2026-04-18 → 2026-05-13 |
+| Distinct game days ingested | 26 |
+| Games captured | 66 |
 | Unique teams seen | 16 |
-| Processed team-game rows | 124 |
-| Feature rows (rolling) | 124 |
-| Mean rows per game day | ~5.4 (range 2–8 depending on slate) |
+| Processed team-game rows | 132 |
+| Feature rows (rolling) | 132 |
+| Mean rows per game day | ~5.1 (range 2–8 depending on slate) |
 | Mean Airflow run duration | 1:11 per day-instance |
 | 14-day backfill total wall-clock | ~16 minutes (sequential, `max_active_runs=1`) |
 | Backfill task instances (initial) | 70 / 70 succeeded, 0 failed, 0 retried |
-| Test suite | 29 passed, 1 skipped in ~22s (zero AWS, zero network access) |
+| Test suite | 30 passed, 1 skipped in ~33s (zero AWS, zero network access) |
 | Hot path failures during ongoing daily ops | 1 transient `nba_api` blip auto-recovered via retry policy |
 | Real-data correctness regressions caught | 2 (`TO`→`tov` rename, partition-overwrite mode) |
+| Teams eliminated / still active | 10 / 6 (computed live from series-state logic) |
 
-### Top of leaderboard (through 5/10)
+### Top of leaderboard (through 5/13)
 
 Sorted by trailing 10-game true-shooting %:
 
-| Team | games in window | rolling pts | rolling TS% | rolling win% |
-|---|---|---|---|---|
-| NYK | 10 | 120.4 | .630 | .800 |
-| OKC | 7 | 122.1 | .628 | 1.000 |
-| SAS | 9 | 113.4 | .588 | .667 |
+| Team | status | games in window | rolling pts | rolling TS% | rolling win% |
+|---|---|---|---|---|---|
+| NYK | ACTIVE | 10 | 120.4 | .630 | .800 |
+| OKC | ACTIVE | 8 | 121.2 | .628 | 1.000 |
+| SAS | ACTIVE | 10 | 114.7 | .591 | .700 |
 
-NYK is the first team to hit a full 10-game window — and they're shooting .630 TS% over an 8-2 stretch, the kind of trailing signal a survivor / spread / total prediction model would weight heavily. OKC's still perfect at 7-0 but with a slightly thinner sample. Cross-checks against ESPN — series records and game counts reconcile exactly.
+NYK has the first full 10-game window (8-2 stretch at .630 TS%). OKC's still perfect at 8-0 with .628 TS%. SAS rounds out the top three at .591 across their own full window. Three of the six remaining playoff teams. The remaining ten are out — series-elimination state is computed live from the processed layer's win/loss tallies and surfaced as the dashboard's ACTIVE / OUT badges.
 
 ---
 

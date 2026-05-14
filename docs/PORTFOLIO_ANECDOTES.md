@@ -133,8 +133,8 @@ Each anecdote follows the same five-field shape:
   failed), a stale-DagRun blocking pattern that bit twice (eventually
   automated away with the `-CleanStale` flag in `catch_up.ps1`), and a
   one-day backfill-window gap caught only by manual reconciliation
-  against ESPN. End result through 2026-05-10: **124 team-game rows
-  across 23 distinct game dates (62 games captured), zero data loss, zero
+  against ESPN. End result through 2026-05-13: **132 team-game rows
+  across 26 distinct game dates (66 games captured), zero data loss, zero
   unsynced days** at any point after a catch-up.
 - **What it demonstrates**: The difference between "I built a pipeline"
   and "I built a pipeline I actually run." Most portfolio data

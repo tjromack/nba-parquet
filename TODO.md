@@ -1,6 +1,6 @@
 # TODO.md — Phased Build Plan
 
-## Status snapshot (as of 2026-05-10)
+## Status snapshot (as of 2026-05-13)
 
 | Phase | State | Commit |
 |---|---|---|
@@ -13,7 +13,7 @@
 
 **Phase 5 sub-status:**
 - ✅ GitHub Actions CI (`eb71ac2`) — lint + tests + Docker build verify on every push
-- ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`) — 4 views, reads live pipeline output
+- ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`, `bb1abcb`) — 4 views, reads live pipeline output, includes auto-generated "What's notable" commentary + series-elimination tracking with ACTIVE/OUT status
 - ✅ `docs/PROJECT_QA.md` (`b379be4`) — technical + layman Q&A reference
 - ✅ `docs/PORTFOLIO_ANECDOTES.md` (`62f5dd2`, `d728aab`) — interview-ready story bank
 - ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-in-60s
@@ -23,9 +23,9 @@
 - ⏳ Tag `v1.0.0` release
 - ⏳ LinkedIn / portfolio post
 
-**Test gate**: 29 passed, 1 skipped in ~22s (Airflow-load test runs only when `apache-airflow` is installed locally).
-**Real-data validation**: 124 team-game rows from 23 distinct game dates (62 games captured), 2026-04-18 → 2026-05-10. Cross-reconciles to ESPN — NYK 8-2 over their last 10 with .630 TS%, OKC perfect 7-0 with .628 TS%, PHX 0-4 swept in round 1.
-**Operational milestone**: pipeline has run daily through the 2025–26 NBA playoffs with zero data loss across three+ weeks; one transient `nba_api` blip was auto-recovered via Airflow's retry policy.
+**Test gate**: 30 passed, 1 skipped in ~33s (Airflow-load test runs only when `apache-airflow` is installed locally; the new test exercises series-elimination logic against a synthetic 14-row fixture).
+**Real-data validation**: 132 team-game rows from 26 distinct game dates (66 games captured), 2026-04-18 → 2026-05-13. Cross-reconciles to ESPN — NYK 8-2 over their last 10 with .630 TS%, OKC perfect 8-0 with .628 TS%, ten teams already eliminated.
+**Operational milestone**: pipeline has run daily through the 2025–26 NBA playoffs with zero data loss across three+ weeks; one transient `nba_api` blip was auto-recovered via Airflow's retry policy. Dashboard now surfaces series-elimination state (10 of 16 teams out, 6 still active) computed live from the processed layer.
 
 ---
 
