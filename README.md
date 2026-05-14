@@ -11,7 +11,7 @@
 
 > 📋 **Need to explain this project to someone?** See [`docs/PROJECT_QA.md`](docs/PROJECT_QA.md) — the same six questions answered in both technical and layman terms, plus 30-second / 2-minute / 30-minute pitches.
 >
-> 🎤 **Interview prep**: [`docs/PORTFOLIO_ANECDOTES.md`](docs/PORTFOLIO_ANECDOTES.md) collects real moments from building this — retry recovery, a column-name regression, ESPN reconciliation, the Docker parallel-build race fix — each one a calibrated 30-second story.
+> 🛠️ **Engineering notes**: [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — a curated log of notable moments from building and operating this: retry recovery, a column-name regression caught against real data, ESPN reconciliation, the Docker parallel-build race fix, and how the daily-ops script became self-healing.
 >
 > 📊 **Live dashboard**: `streamlit run streamlit_app.py` reads the pipeline's output directly and surfaces a leaderboard, per-team rolling trends, head-to-head comparisons, and a filterable data explorer. See the [Live dashboard](#live-dashboard) section below.
 

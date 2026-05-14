@@ -1,8 +1,9 @@
-# Portfolio Anecdotes — nba-parquet
+# Engineering notes — nba-parquet
 
-> Real moments from building this project that demonstrate specific skills or
-> tell a useful story in interviews. Each entry is calibrated to be concise
-> enough to drop into a conversation without notes — usually 30 seconds spoken.
+> Curated log of notable moments from building and operating this project —
+> bugs caught, design decisions defended, recurring operational patterns
+> automated away. The goal is a permanent record of *why* the codebase looks
+> the way it does, beyond what individual commit messages capture.
 >
 > Companion doc: [PROJECT_QA.md](PROJECT_QA.md) — the same project explained
 > end-to-end. PROJECT_QA covers *what the project is*; this file covers
@@ -10,12 +11,12 @@
 
 ## Format
 
-Each anecdote follows the same five-field shape:
+Each note follows the same five-field shape:
 
-- **Headline** — interview-ready one-liner ("I caught a..." / "I noticed that..." / "I designed for...")
-- **When** — date or phase, so I can place it on a timeline if asked
+- **Headline** — one-line summary
+- **When** — date or phase, so it can be placed on a timeline
 - **What happened** — the actual technical story, 2–4 sentences
-- **What it demonstrates** — the skill, competency, or decision-making it proves
+- **What it demonstrates** — the engineering principle, design choice, or operational pattern it illustrates
 - **Where to look** — file paths or commit SHAs so the story is verifiable
 
 ---
@@ -136,13 +137,12 @@ Each anecdote follows the same five-field shape:
   against ESPN. End result through 2026-05-13: **132 team-game rows
   across 26 distinct game dates (66 games captured), zero data loss, zero
   unsynced days** at any point after a catch-up.
-- **What it demonstrates**: The difference between "I built a pipeline"
-  and "I built a pipeline I actually run." Most portfolio data
-  engineering stops at the first one — the second exposes failure modes
-  you only learn by living with the system. Each of those failure modes
-  produced a fix that's still in the codebase: dynamic partition
-  overwrite, the retry policy, single-build-owner Docker pattern,
-  `-CleanStale` automation, and the catch-up script's auto-gap detection.
+- **What it demonstrates**: The difference between *building* a pipeline
+  and *operating* one. Real-world failure modes only surface when you live
+  with the system day-to-day — each one here produced a fix that's still
+  in the codebase: dynamic partition overwrite, the retry policy,
+  single-build-owner Docker pattern, `-CleanStale` automation, and the
+  catch-up script's auto-gap detection.
 - **Where to look**: [`scripts/catch_up.ps1`](../scripts/catch_up.ps1) is
   the single command that operationalizes this; the README's "Daily
   catch-up during the season" section is the runbook;
@@ -170,32 +170,38 @@ Each anecdote follows the same five-field shape:
 
 ---
 
-## How to use this doc
+## When to add a new note
 
-- **Before an interview**: skim the headlines and pick 2–3 that match the
-  job's stated stack. The retry-recovery and dynamic-partition-overwrite
-  stories are the strongest "production-readiness" anecdotes; the
-  TO/tov regression and ESPN reconciliation are the strongest "data
-  correctness mindset" anecdotes; the Docker race is a "infrastructure
-  literacy" story.
-- **When asked an open-ended "tell me about a time"**: lead with the
-  headline, give the 2-sentence "what happened," then pivot to "what it
-  demonstrates." Have the file path ready in case the interviewer wants to
-  see the code.
-- **When updating this doc**: add new anecdotes as they happen — don't try
-  to manufacture them. The most credible stories are the ones where the
-  problem genuinely surprised me. If the resolution required a real fix
-  (code, architecture, process), it's worth recording. Pure debugging
-  ("turned out it was a typo") usually isn't unless the typo had
-  educational value.
+Add an entry when something happens that future-me (or anyone reading the
+codebase six months from now) couldn't reconstruct from the commit alone.
+The bar isn't "every change" — most commits explain themselves. The bar is
+"this moment teaches something about the system or the engineering process."
 
-## Adding a new anecdote — quick template
+Strong candidates:
+
+- A bug whose resolution required a non-obvious fix (architectural or
+  process-level), especially if the same class of bug could recur in
+  another project
+- A design choice where multiple plausible options existed and the picked
+  one was non-obvious in retrospect
+- A recurring operational pattern that got automated away
+- A regression caught via testing or cross-reconciliation against external
+  truth
+- A failure mode that surfaced only under real-world load
+
+Weak candidates (skip these):
+
+- Pure debugging where the resolution was a typo or one-character fix
+- Routine refactors with no design content
+- Anything the commit message already covers in full
+
+## Template
 
 ```markdown
-### Headline (one line, interview-ready)
+### Headline (one line)
 
 - **When**: phase / date
 - **What happened**: 2–4 sentences, technical specifics
-- **What it demonstrates**: skill, competency, or decision-making proven
+- **What it demonstrates**: engineering principle, design choice, or operational pattern
 - **Where to look**: file paths or commit SHA
 ```

@@ -15,7 +15,7 @@
 - ✅ GitHub Actions CI (`eb71ac2`) — lint + tests + Docker build verify on every push
 - ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`, `bb1abcb`) — 4 views, reads live pipeline output, includes auto-generated "What's notable" commentary + series-elimination tracking with ACTIVE/OUT status
 - ✅ `docs/PROJECT_QA.md` (`b379be4`) — technical + layman Q&A reference
-- ✅ `docs/PORTFOLIO_ANECDOTES.md` (`62f5dd2`, `d728aab`) — interview-ready story bank
+- ✅ `docs/ENGINEERING_NOTES.md` (`62f5dd2`, `d728aab`, renamed from `PORTFOLIO_ANECDOTES.md` before going public) — curated log of notable engineering moments
 - ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-in-60s
 - ✅ Daily catch-up automation (`812ba6c`, `62f5dd2`) — `scripts/catch_up.ps1` with `-CleanStale`
 - ⏳ `notebooks/exploratory_eda.ipynb` — narrative companion to Streamlit
@@ -122,7 +122,7 @@
 - [x] **Skills demonstrated table** (`1cb1438`): embedded in README rather than its own file. 12-row table mapping competencies to clickable file references.
 - [x] **Mermaid architecture diagram** (`011c7c3`, `883ced5`): renders natively on GitHub, shows data flow + DAG + zones in one TD layout.
 - [x] **`docs/PROJECT_QA.md`** (`b379be4`): technical + layman Q&A reference, six questions + tiered pitches (30 sec / 2 min / 30 min).
-- [x] **`docs/PORTFOLIO_ANECDOTES.md`** (`62f5dd2`, `d728aab`): seven interview-ready stories with headline / when / what / demonstrates / where-to-look format.
+- [x] **`docs/ENGINEERING_NOTES.md`** (`62f5dd2`, `d728aab`; renamed from `PORTFOLIO_ANECDOTES.md` before flipping the repo public): seven curated notes with headline / when / what / demonstrates / where-to-look format.
 - [x] **`scripts/catch_up.ps1`** (`812ba6c`, `545fd3c`, `62f5dd2`): self-healing daily catch-up with `-CleanStale` flag for stuck-DagRun recovery.
 - [x] **Streamlit dashboard** (`ff0e222`, polish `e70c0c2`): four views (Leaderboard, Team detail, Head-to-head, Data explorer) reading live pipeline output.
 - [x] **Results & Metrics** section in README (`1ba21a1`): concrete numbers from the validation run + top-of-leaderboard table.
