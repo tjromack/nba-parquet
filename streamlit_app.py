@@ -80,6 +80,136 @@ def _color_wl(val: str) -> str:
     return ""
 
 
+def _color_status(val: str) -> str:
+    """Cell-level color for ACTIVE / OUT team-status tokens."""
+    if val == "ACTIVE":
+        return "background-color: #1f4d2e; color: #b6e6c5; font-weight: 600"
+    if val == "OUT":
+        return "background-color: #4d1f1f; color: #e6b6b6; font-weight: 600"
+    return ""
+
+
+def series_summary(processed: pd.DataFrame) -> pd.DataFrame:
+    """Per-(team, opponent) series tally with WON / LOST / ACTIVE state.
+
+    A series is detected by grouping all games between two teams within
+    the dataset. State transitions when one side reaches 4 wins (NBA
+    playoff series length). Returns one row per (team, opponent) pair —
+    so a single series between A and B produces two rows (A's view and
+    B's view).
+    """
+    if processed.empty:
+        return pd.DataFrame(
+            columns=[
+                "team_abbreviation",
+                "opponent_abbreviation",
+                "wins",
+                "losses",
+                "games",
+                "state",
+            ]
+        )
+    grouped = (
+        processed.groupby(["team_abbreviation", "opponent_abbreviation"])
+        .agg(
+            wins=("win", lambda s: int(s.astype(bool).sum())),
+            losses=("win", lambda s: int((~s.astype(bool)).sum())),
+            games=("game_id", "count"),
+        )
+        .reset_index()
+    )
+
+    def _state(row: pd.Series) -> str:
+        if row["wins"] >= 4:
+            return "WON"
+        if row["losses"] >= 4:
+            return "LOST"
+        return "ACTIVE"
+
+    grouped["state"] = grouped.apply(_state, axis=1)
+    return grouped
+
+
+def team_status(processed: pd.DataFrame) -> dict[str, str]:
+    """Map team abbreviation -> 'ACTIVE' or 'ELIMINATED'.
+
+    A team is eliminated the moment any of their series shows them
+    having lost 4 games. Otherwise they're still alive.
+    """
+    if processed.empty:
+        return {}
+    series = series_summary(processed)
+    eliminated = set(
+        series.loc[series["state"] == "LOST", "team_abbreviation"].unique()
+    )
+    return {
+        team: ("ELIMINATED" if team in eliminated else "ACTIVE")
+        for team in processed["team_abbreviation"].unique()
+    }
+
+
+def generate_commentary(features: pd.DataFrame, processed: pd.DataFrame) -> list[str]:
+    """Template-driven natural-language notes about current state.
+
+    Returned as a list of markdown strings — caller is expected to
+    render them as bullets or join with spacing. Notes are emitted in
+    priority order; first item is always the leaderboard top.
+    """
+    notes: list[str] = []
+    if features.empty:
+        return notes
+
+    latest = latest_snapshot(features)
+    if latest.empty:
+        return notes
+
+    top = latest.iloc[0]
+    notes.append(
+        f"**{top['team_abbreviation']}** leads at "
+        f"{top['rolling_ts_pct']:.3f} TS% over "
+        f"{int(top['games_in_window'])} games "
+        f"(win rate {top['rolling_win_pct']:.0%}, "
+        f"avg {top['rolling_pts']:.1f} pts)."
+    )
+
+    full = latest[latest["games_in_window"] == 10]
+    if not full.empty:
+        names = ", ".join(full["team_abbreviation"].tolist())
+        notes.append(
+            f"Hit a full 10-game window (lookback is now saturated): **{names}**."
+        )
+
+    # Restrict undefeated / winless to teams with ≥4 games — a 1-game
+    # window is technically 100% win rate but tells you nothing.
+    sample = latest[latest["games_in_window"] >= 4]
+    undefeated = sample[sample["rolling_win_pct"] == 1.0]
+    if not undefeated.empty:
+        names = ", ".join(undefeated["team_abbreviation"].tolist())
+        notes.append(f"Undefeated in current rolling window: **{names}**.")
+    winless = sample[sample["rolling_win_pct"] == 0.0]
+    if not winless.empty:
+        names = ", ".join(winless["team_abbreviation"].tolist())
+        notes.append(f"Winless in current rolling window: **{names}**.")
+
+    statuses = team_status(processed)
+    eliminated = sorted(t for t, s in statuses.items() if s == "ELIMINATED")
+    active_count = sum(1 for s in statuses.values() if s == "ACTIVE")
+    if eliminated:
+        notes.append(f"Eliminated from playoffs: **{', '.join(eliminated)}**.")
+    if active_count and statuses:
+        notes.append(f"**{active_count}** of {len(statuses)} teams still active.")
+
+    return notes
+
+
+def team_series_history(processed: pd.DataFrame, team: str) -> pd.DataFrame:
+    """Series history for a single team — one row per opponent."""
+    if processed.empty:
+        return pd.DataFrame()
+    team_view = series_summary(processed)
+    return team_view[team_view["team_abbreviation"] == team].reset_index(drop=True)
+
+
 # --- Sidebar ---
 
 st.sidebar.title("🏀 nba-parquet")
@@ -109,6 +239,12 @@ date_range_str = (
 )
 st.sidebar.metric("Date range", date_range_str)
 
+_statuses_sidebar = team_status(processed)
+if _statuses_sidebar:
+    _active = sum(1 for s in _statuses_sidebar.values() if s == "ACTIVE")
+    _total = len(_statuses_sidebar)
+    st.sidebar.metric("Teams still active", f"{_active} / {_total}")
+
 _ts = latest_data_timestamp()
 if _ts is not None:
     st.sidebar.caption(f"Data last refreshed: **{_ts.strftime('%Y-%m-%d %H:%M')}**")
@@ -136,7 +272,22 @@ if view == "Leaderboard":
         "visible at a glance."
     )
 
+    # --- What's notable callout ---
+    _notes = generate_commentary(features, processed)
+    if _notes:
+        _ts_label = processed["game_date"].max().strftime("%Y-%m-%d")
+        st.info(
+            f"**What's notable through {_ts_label}**\n\n"
+            + "\n\n".join(f"- {n}" for n in _notes)
+        )
+
     snap = latest_snapshot(features)
+    _statuses = team_status(processed)
+    snap = snap.assign(
+        status=snap["team_abbreviation"].map(
+            lambda t: "OUT" if _statuses.get(t) == "ELIMINATED" else "ACTIVE"
+        )
+    )
     snap_display = snap.rename(
         columns={
             "team_abbreviation": "team",
@@ -152,6 +303,7 @@ if view == "Leaderboard":
     )[
         [
             "team",
+            "status",
             "games",
             "pts",
             "eFG%",
@@ -166,9 +318,11 @@ if view == "Leaderboard":
     # Inline bars on TS% and win% scale to each column's actual min/max,
     # so the visually-leading team has the longest bar. Pure CSS — avoids
     # the matplotlib dependency that .background_gradient() pulls in.
+    # ACTIVE / OUT status column gets green/red cell coloring via _color_status.
     st.dataframe(
         snap_display.style.bar(subset=["TS%"], color="#2e8b57")
         .bar(subset=["win%"], color="#3a7ca5")
+        .map(_color_status, subset=["status"])
         .format(
             {
                 "pts": "{:.1f}",
@@ -217,6 +371,28 @@ elif view == "Team detail":
     if team_features.empty:
         st.warning(f"No data for {team}")
         st.stop()
+
+    # --- Series history banner ---
+    _series = team_series_history(processed, team)
+    if not _series.empty:
+        _team_status = team_status(processed).get(team, "ACTIVE")
+        if _team_status == "ELIMINATED":
+            st.error(f"{team}: **ELIMINATED** from the 2025–26 playoffs.")
+        else:
+            st.success(f"{team}: **ACTIVE** in the 2025–26 playoffs.")
+        # Render one bullet per opponent series
+        bullets = []
+        for _, row in _series.iterrows():
+            label = {
+                "WON": "won",
+                "LOST": "lost",
+                "ACTIVE": "in progress",
+            }.get(row["state"], row["state"])
+            bullets.append(
+                f"- vs **{row['opponent_abbreviation']}**: "
+                f"{int(row['wins'])}-{int(row['losses'])} ({label})"
+            )
+        st.markdown("**Series history:**\n" + "\n".join(bullets))
 
     latest = team_features.iloc[-1]
     col1, col2, col3, col4 = st.columns(4)
