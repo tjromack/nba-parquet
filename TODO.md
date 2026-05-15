@@ -8,7 +8,7 @@
 | **Phase 2 — Airflow DAG + Docker Compose** | ✅ shipped | [`46377d1`](https://github.com/tjromack/nba-parquet/commit/46377d1) |
 | **Phase 3 — Rolling features + dynamic partition overwrite** | ✅ shipped | [`efa1c3b`](https://github.com/tjromack/nba-parquet/commit/efa1c3b) |
 | Phase 4 — Real AWS deploy | ⏳ optional, low priority | — |
-| **Phase 4b — Prediction model** (parked) | ⏳ next major lift | see Backlog |
+| **Phase 4b — Prediction model** (parked, fully scoped) | ⏳ next major lift — open the Backlog section, start test-first | see Backlog |
 | **Phase 5 — Polish / CI / docs / dashboard** | ✅ mostly shipped | multiple commits, see below |
 
 **Phase 5 sub-status:**
@@ -143,22 +143,107 @@ Phase 5 leftovers (not blocking; do as energy allows):
 
 ### Phase 4b — Prediction model (the project's stated raison d'être)
 
-The features layer was built to feed a downstream prediction model. Closing the
-loop is what turns this from "I built a feature store" into "I built a feature
-store and the model that consumes it." Bigger lift than a single session
-(weekend-scale), so parking until ready.
+> The features layer was built to feed a downstream prediction model. Closing
+> the loop turns this from "I built a feature store" into "I built a feature
+> store, the model that consumes it, and an honest evaluation of how it does."
+> Weekend-scale. Open this section and start from the top when ready.
 
-- [ ] `models/spread_predictor.py` — read `features/`, join to actual game
-  outcomes (winner, point margin, total points), train an xgboost or
-  sklearn regressor
-- [ ] Time-series cross-validation (train on weeks 1–2, test on week 3, etc.)
-  to avoid leaking future games into training
-- [ ] **MLflow** experiment tracking so model versions and metrics are
-  reproducible and portfolio-visible
-- [ ] New `streamlit_app.py` view: "Tomorrow's predictions" — model output
-  for upcoming games with the rolling features that drove each prediction
+**Goal (v1):** predict the **winner** of an NBA playoff game (binary
+classification) from each team's trailing rolling features as they stood
+*entering* that game. Ship: a leak-free training-set builder, a baseline +
+one real model, time-series evaluation with honest baselines, MLflow
+tracking, a Streamlit "Predictions" view, and the regression test that
+guarantees no target leakage.
+
+**Non-goals for v1 (park as Phase 4c if wanted):**
+- Spread (point-margin) and total-points regression — winner-only first
+- Hyperparameter-tuning sagas — one baseline + one tree model, sensible defaults
+- Beating Vegas / any claim of predictive supremacy — see "Data-volume honesty"
+- Real-time / in-game prediction — pre-game only
+
+**The #1 correctness gate — no target leakage (read before writing any code):**
+The `features/` rolling columns for game N are computed over a window that
+*includes game N itself*. Using them to predict game N is leakage and makes
+every metric a lie. The training-set builder MUST use each team's features
+**as of the game strictly before** the one being predicted (lag by one game
+per team, or recompute the window excluding the target game). This is the
+single most important thing in the whole phase and gets a dedicated test
+before anything else is trusted.
+
+**Build order:**
+
+- [ ] `models/__init__.py` + decide module layout:
+  - `models/dataset.py` — pure function: `build_training_frame(features_df,
+    processed_df) -> DataFrame`. One row per game: team A's lagged rolling
+    features, team B's lagged rolling features, plus the label
+    (`team_a_won`). Joins the two (team, game) feature rows into one
+    game-level row. **Leak-free by construction** (uses prior-game features
+    only).
+  - `models/train.py` — fits baseline + model, runs time-series evaluation,
+    logs everything to MLflow, persists the chosen model artifact.
+  - `models/predict.py` — loads the persisted model, scores upcoming /
+    recent games, returns predicted winner + probability + the feature
+    vector that drove it (for the Streamlit view).
+- [ ] Labels: join `processed/` to recover actual game outcome (`win` per
+  team → `team_a_won` binary). Confirm both teams' rows reconcile (exactly
+  one winner per game) as a data-quality assertion.
+- [ ] **Baselines first, before any model.** Report accuracy / log-loss for:
+  (a) always pick home team, (b) always pick the team with the better
+  trailing `rolling_win_pct`, (c) always pick the better trailing
+  `rolling_ts_pct`. The model has to beat these to be worth anything —
+  naming them up front is the honest framing.
+- [ ] Model: logistic-regression baseline, then `sklearn`
+  `HistGradientBoostingClassifier` (or `xgboost`). Fixed `random_state`;
+  deterministic and reproducible.
+- [ ] **Time-series evaluation only.** Expanding-window walk-forward: train
+  on games up to date D, test on games after D, step forward. NEVER random
+  k-fold (leakage). Metrics: accuracy, log loss, Brier score, a calibration
+  curve, and the model-vs-baseline delta.
+- [ ] **MLflow** experiment tracking: each run logs params, metrics, the
+  baseline deltas, and the model artifact. Add `mlflow` to
+  `requirements.txt`; document `mlflow ui` in the README. Runs must be
+  reproducible from a clean clone.
+- [ ] New `streamlit_app.py` view — **"Predictions"**: for recent/upcoming
+  games show predicted winner, win probability, and the rolling features
+  that drove it. Closes the narrative loop visually. Reads the persisted
+  model + `predict.py`; degrades gracefully if no model artifact present.
+- [ ] Tests (`tests/test_models.py`):
+  - [ ] **Leakage guard (write this first):** construct a tiny known
+    game sequence, assert the training row for game N contains only
+    information derivable from games strictly before N for each team.
+  - [ ] `build_training_frame` produces one row per game, exactly one
+    label, expected column set; empty input → empty frame (mirrors the
+    off-day handling elsewhere).
+  - [ ] Baseline functions return sane accuracies on a hand-built fixture.
+  - [ ] Walk-forward splitter never puts a test game chronologically
+    before any training game.
 - [ ] Optional `notebooks/model_eval.ipynb` — calibration plot, feature
-  importance chart, error analysis by team / situation
+  importance, error analysis by situation (home/away, series game number).
+- [ ] Conventions to preserve (same discipline as the ETL layer): pure
+  dataset function, no `.collect()` outside the final materialization,
+  schema-first where practical, lint-clean, CI green, lazy imports if any
+  of this is ever wired into the DAG.
+
+**Definition of done (v1):** `python -m models.train` runs from a clean
+clone, logs an MLflow run, persists a model that beats all three baselines
+on walk-forward eval (or the README honestly states it doesn't and why),
+the leakage test passes, and the Streamlit "Predictions" view renders for
+recent games.
+
+**Data-volume honesty (state this in the README, don't hide it):** playoff-
+only data is thin (~65 games). Phase 4b is a demonstration of *correct ML
+engineering methodology on real data* — leak-free features, honest
+baselines, time-series evaluation, reproducible tracking — not a claim of
+predictive edge. The credible scaling path is the regular-season bulk-load
+(see "Other parked ideas"): ~1,200+ games is enough to make the model
+numbers meaningful. Saying this plainly is itself a portfolio strength —
+it signals you know the difference between methodology and results.
+
+**Suggested first session when you pick this up:** create `models/`, write
+the leakage test against a synthetic sequence FIRST (red), then
+`build_training_frame` until it's green. That single test-first step
+de-risks the entire phase — everything downstream is only trustworthy if
+the training frame is leak-free.
 
 ### Streamlit Cloud public deployment (deferred)
 
