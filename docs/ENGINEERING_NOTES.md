@@ -21,7 +21,44 @@ Each note follows the same five-field shape:
 
 ---
 
-## Anecdotes
+## Notes
+
+### No-games playoff off-day surfaced an empty-partition schema bug
+
+- **When**: 2026-05-14 backfill (caught 2026-05-15)
+- **What happened**: The daily catch-up failed on 2026-05-14 and kept
+  failing identically on every re-run. NBA playoff schedules have
+  off-days — 5/14 had zero games. `ingest_raw` handled that correctly
+  (it writes an empty but schema'd raw snapshot), but
+  `transform_and_aggregate` then wrote an empty *partitioned* DataFrame
+  to staging, which produces zero Parquet data files, and
+  `write_processed`'s bare `spark.read.parquet(staging_uri)` on that
+  empty directory raised `AnalysisException: [UNABLE_TO_INFER_SCHEMA]`.
+  The task failed both retries (deterministic — same empty input every
+  time), blocked `write_features`, and the backfill orchestrator raised
+  `BackfillUnfinished`. Root-caused by pulling the actual task log out
+  of the Airflow logs volume (the orchestrator output only showed the
+  generic "unfinished" summary, not the underlying Spark error). Fixed
+  by treating a zero-game date as a *skip*, not a failure:
+  `transform_and_aggregate` now raises `AirflowSkipException` when the
+  raw frame is empty, which skip-propagates to the downstream writes;
+  `notify_done` still runs via `trigger_rule=all_done`; the backfill
+  orchestrator treats skipped as success. A regression test locks the
+  precondition (empty raw → valid empty aggregation, not a crash).
+- **What it demonstrates**: A real production edge case found by
+  operating the pipeline daily, not by synthetic testing — and the
+  discipline to root-cause from task logs rather than guess. Also using
+  the *correct* primitive: a no-data day is semantically "skipped," not
+  "failed," and Airflow's skip-propagation + `all_done` trigger rule
+  model that exactly. The fix makes the pipeline correct for the full
+  playoff calendar, off-days included.
+- **Where to look**: [`dags/nba_etl_dag.py`](../dags/nba_etl_dag.py)
+  `_transform_and_aggregate` (the `raw_df.rdd.isEmpty()` guard) and
+  `_write_processed` (defensive `UNABLE_TO_INFER_SCHEMA` → skip
+  translation); regression test
+  `test_aggregate_on_empty_raw_yields_empty_not_error` in
+  [`tests/test_transform.py`](../tests/test_transform.py); commit
+  `144a3b4`.
 
 ### Auto-recovery from a transient API failure via Airflow's retry policy
 
