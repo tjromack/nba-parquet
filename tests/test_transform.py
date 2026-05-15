@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from etl.schema import PROCESSED_SCHEMA
+from etl.schema import PROCESSED_SCHEMA, RAW_BOX_SCORE_SCHEMA
 from etl.transform import aggregate_team_game, get_top_player, join_top_players
 
 
@@ -24,6 +24,23 @@ def test_aggregate_team_game_schema_matches_processed(raw_df):
     expected = {f.name for f in PROCESSED_SCHEMA.fields}
     actual = set(enriched.columns)
     assert expected == actual, f"missing={expected - actual} extra={actual - expected}"
+
+
+def test_aggregate_on_empty_raw_yields_empty_not_error(spark):
+    """A no-games playoff off-day produces an empty (but schema'd) raw
+    snapshot. The transform functions must return a valid empty
+    DataFrame, not raise — the DAG relies on ``raw_df.rdd.isEmpty()``
+    being a clean signal to skip downstream (see _transform_and_aggregate).
+    """
+    empty_raw = spark.createDataFrame([], RAW_BOX_SCORE_SCHEMA)
+    assert empty_raw.rdd.isEmpty()
+
+    team_game = aggregate_team_game(empty_raw)
+    enriched = join_top_players(team_game, empty_raw)
+
+    # No crash, zero rows, schema still intact.
+    assert enriched.count() == 0
+    assert set(enriched.columns) == {f.name for f in PROCESSED_SCHEMA.fields}
 
 
 def test_aggregate_team_totals_match_hand_computed(raw_df):

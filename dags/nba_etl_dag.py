@@ -54,7 +54,19 @@ def _ingest_raw(ds: str, **_: object) -> str:
 
 
 def _transform_and_aggregate(ti, ds: str, **_: object) -> str:
-    """Read raw, compute team-game aggregations, write to a staging path."""
+    """Read raw, compute team-game aggregations, write to a staging path.
+
+    NBA playoff schedules have off-days — a date with zero games is a
+    valid state, not a failure. ``ingest_raw`` writes an empty (but
+    schema'd) raw snapshot for such days; here we detect the empty
+    aggregation and raise ``AirflowSkipException`` so this task and its
+    downstream (``write_processed``, ``write_features``) are marked
+    *skipped* rather than failed. ``notify_done`` still runs
+    (trigger_rule=all_done), and the backfill orchestrator treats
+    skipped as success instead of raising ``BackfillUnfinished``.
+    """
+    from airflow.exceptions import AirflowSkipException
+
     from etl.paths import resolve_output_uri
     from etl.schema import RAW_BOX_SCORE_SCHEMA
     from etl.transform import aggregate_team_game, get_spark, join_top_players
@@ -72,6 +84,11 @@ def _transform_and_aggregate(ti, ds: str, **_: object) -> str:
     spark = get_spark(f"nba-etl-transform-{ds}")
     try:
         raw_df = spark.read.schema(RAW_BOX_SCORE_SCHEMA).parquet(raw_path)
+        if raw_df.rdd.isEmpty():
+            raise AirflowSkipException(
+                f"No NBA games on {ds} (playoff off-day) — "
+                "nothing to transform; skipping downstream tasks."
+            )
         team_game = aggregate_team_game(raw_df)
         processed = join_top_players(team_game, raw_df)
         (
@@ -85,7 +102,18 @@ def _transform_and_aggregate(ti, ds: str, **_: object) -> str:
 
 
 def _write_processed(ti, **_: object) -> str:
-    """Promote staging output to the canonical processed/ prefix."""
+    """Promote staging output to the canonical processed/ prefix.
+
+    Defensive against an empty staging path: if this task is cleared and
+    re-run in isolation for a no-games day, ``spark.read.parquet`` on an
+    empty directory would raise the cryptic ``UNABLE_TO_INFER_SCHEMA``.
+    We translate that into a clean ``AirflowSkipException`` so the state
+    is "skipped", consistent with how ``transform_and_aggregate`` handles
+    the same off-day condition.
+    """
+    from airflow.exceptions import AirflowSkipException
+    from pyspark.errors import AnalysisException
+
     from etl.transform import get_spark
     from etl.write import write_processed
 
@@ -97,7 +125,15 @@ def _write_processed(ti, **_: object) -> str:
 
     spark = get_spark("nba-etl-write-processed")
     try:
-        df = spark.read.parquet(staging_uri)
+        try:
+            df = spark.read.parquet(staging_uri)
+        except AnalysisException as exc:
+            if "UNABLE_TO_INFER_SCHEMA" in str(exc):
+                raise AirflowSkipException(
+                    f"Staging path {staging_uri} is empty (no-games day) — "
+                    "nothing to promote; skipping."
+                ) from exc
+            raise
         return write_processed(df, s3_bucket)
     finally:
         spark.stop()
