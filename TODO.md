@@ -172,21 +172,23 @@ before anything else is trusted.
 
 **Build order:**
 
-- [ ] `models/__init__.py` + decide module layout:
-  - `models/dataset.py` — pure function: `build_training_frame(features_df,
-    processed_df) -> DataFrame`. One row per game: team A's lagged rolling
-    features, team B's lagged rolling features, plus the label
-    (`team_a_won`). Joins the two (team, game) feature rows into one
-    game-level row. **Leak-free by construction** (uses prior-game features
-    only).
-  - `models/train.py` — fits baseline + model, runs time-series evaluation,
-    logs everything to MLflow, persists the chosen model artifact.
-  - `models/predict.py` — loads the persisted model, scores upcoming /
+- [x] `models/__init__.py` + module layout decided (session 1, commit pending):
+  - [x] `models/dataset.py` — pure pandas `build_training_frame(features,
+    processed) -> DataFrame`. One row per game: home team's lagged rolling
+    features (`home_*`), away team's lagged rolling features (`away_*`),
+    `label` = 1 if home won. **Leak-free by construction** — per-team
+    lag-1 shift; a team's first game (no prior window) is dropped via
+    inner-join semantics. Pure pandas (decoupled from Spark — the model
+    layer is sklearn/mlflow-world; game-level frame is tiny).
+  - [ ] `models/train.py` — fits baseline + model, runs time-series
+    evaluation, logs everything to MLflow, persists the chosen model
+    artifact. *(session 2)*
+  - [ ] `models/predict.py` — loads the persisted model, scores upcoming /
     recent games, returns predicted winner + probability + the feature
-    vector that drove it (for the Streamlit view).
-- [ ] Labels: join `processed/` to recover actual game outcome (`win` per
-  team → `team_a_won` binary). Confirm both teams' rows reconcile (exactly
-  one winner per game) as a data-quality assertion.
+    vector that drove it (for the Streamlit view). *(session 2/3)*
+- [x] Labels: home/away orientation + `label` recovered from `processed`
+  (`is_home` + `win`); data-quality guard raises `ValueError` unless each
+  game has exactly one home row and one away row.
 - [ ] **Baselines first, before any model.** Report accuracy / log-loss for:
   (a) always pick home team, (b) always pick the team with the better
   trailing `rolling_win_pct`, (c) always pick the better trailing
@@ -208,15 +210,20 @@ before anything else is trusted.
   that drove it. Closes the narrative loop visually. Reads the persisted
   model + `predict.py`; degrades gracefully if no model artifact present.
 - [ ] Tests (`tests/test_models.py`):
-  - [ ] **Leakage guard (write this first):** construct a tiny known
-    game sequence, assert the training row for game N contains only
-    information derivable from games strictly before N for each team.
-  - [ ] `build_training_frame` produces one row per game, exactly one
+  - [x] **Leakage guard (written first, red→green):** synthetic 2-team
+    4-game sequence with decodable rolling values; asserts the training
+    row for game G carries each team's game G-1 values (not G's own) and
+    `label` = game G's actual result.
+  - [x] `build_training_frame` produces one row per game, exactly one
     label, expected column set; empty input → empty frame (mirrors the
-    off-day handling elsewhere).
-  - [ ] Baseline functions return sane accuracies on a hand-built fixture.
+    off-day handling elsewhere); a game where one team lacks prior
+    history is dropped, not half-populated.
+  - [x] Data-quality guard: corrupt orientation (two home rows for one
+    game) raises `ValueError`.
+  - [ ] Baseline functions return sane accuracies on a hand-built
+    fixture. *(session 2)*
   - [ ] Walk-forward splitter never puts a test game chronologically
-    before any training game.
+    before any training game. *(session 2)*
 - [ ] Optional `notebooks/model_eval.ipynb` — calibration plot, feature
   importance, error analysis by situation (home/away, series game number).
 - [ ] Conventions to preserve (same discipline as the ETL layer): pure
