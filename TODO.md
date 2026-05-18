@@ -189,11 +189,34 @@ before anything else is trusted.
 - [x] Labels: home/away orientation + `label` recovered from `processed`
   (`is_home` + `win`); data-quality guard raises `ValueError` unless each
   game has exactly one home row and one away row.
+
+> **Session 1 real-data verification (2026-05-18):** ran
+> `build_training_frame` against the live `out/` Parquet. 69 games →
+> 61 training rows; the 8 dropped reconcile exactly to the 8 first-round
+> series openers where both teams had no prior window — leak-free drop
+> logic confirmed on real multi-series playoff structure, not just the
+> synthetic fixture. Two facts captured for session 2:
+>
+> - **Measured home-win baseline = 0.541** over the 61 games. That is
+>   the "always pick home" accuracy the model must beat. No need to
+>   re-derive it — start the baseline comparison from this number.
+> - **NaN in the split features is expected and correct.**
+>   `home_rolling_pts_home` / `home_rolling_pts_away` / `away_*` carry
+>   ~8 NaNs each — teams whose lagged window had no home (or no away)
+>   game yet. The builder preserves NaN rather than fabricating values
+>   (right call). Consequence: `train.py` MUST impute before fitting.
+>   `HistGradientBoostingClassifier` handles NaN natively; logistic
+>   regression does NOT — so the baseline-vs-model comparison needs a
+>   consistent imputation step (e.g. a `SimpleImputer(strategy="median")`
+>   inside an sklearn `Pipeline`) applied identically to every model so
+>   the comparison stays fair.
+
 - [ ] **Baselines first, before any model.** Report accuracy / log-loss for:
-  (a) always pick home team, (b) always pick the team with the better
-  trailing `rolling_win_pct`, (c) always pick the better trailing
-  `rolling_ts_pct`. The model has to beat these to be worth anything —
-  naming them up front is the honest framing.
+  (a) always pick home team (measured: 0.541 — see note above),
+  (b) always pick the team with the better trailing `rolling_win_pct`,
+  (c) always pick the better trailing `rolling_ts_pct`. The model has to
+  beat these to be worth anything — naming them up front is the honest
+  framing.
 - [ ] Model: logistic-regression baseline, then `sklearn`
   `HistGradientBoostingClassifier` (or `xgboost`). Fixed `random_state`;
   deterministic and reproducible.

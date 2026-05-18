@@ -23,6 +23,35 @@ Each note follows the same five-field shape:
 
 ## Notes
 
+### Leakage firewall verified against real data by exact reconciliation
+
+- **When**: 2026-05-18 (Phase 4b session 1)
+- **What happened**: The prediction model's training-frame builder was
+  written test-first — the target-leakage guard test was authored and
+  confirmed red before any implementation, then `build_training_frame`
+  was built until green. But unit tests run on synthetic fixtures, and
+  this project has twice been bitten by "passes synthetic, real data
+  exposes a mismatch" (the `TO`→`tov` rename, the no-games off-day). So
+  before moving on, the function was run against the live `out/` Parquet
+  as a deliberate gap-closer. It reconciled exactly: 69 games → 61
+  training rows, and the 8 dropped rows are precisely the 8 first-round
+  series openers where both teams had no prior rolling window. The
+  leak-free "drop a game if either team lacks history" rule, plus the
+  visible fact that the training set starts 4/20 rather than the 4/18
+  playoff tip-off, confirmed the lag-1 firewall behaves correctly on
+  real multi-series playoff structure — not just the hand-built fixture.
+- **What it demonstrates**: Test-first discipline on the one piece where
+  a silent bug (leakage) would invalidate every downstream metric — and
+  the habit of explicitly verifying synthetic-tested logic against real
+  data instead of trusting green unit tests, given a track record of
+  real-data mismatches. The exact row-count reconciliation is the kind
+  of independent check that catches off-by-one and join errors a
+  schema-only assertion would miss.
+- **Where to look**: [`models/dataset.py`](../models/dataset.py)
+  (`build_training_frame`, the per-team lag-1 shift + inner-join drop);
+  leakage guard `test_build_training_frame_is_leak_free` in
+  [`tests/test_models.py`](../tests/test_models.py); commit `00b0de9`.
+
 ### No-games playoff off-day surfaced an empty-partition schema bug
 
 - **When**: 2026-05-14 backfill (caught 2026-05-15)
