@@ -15,7 +15,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from models.baselines import baseline_accuracies
 from models.dataset import OUTPUT_COLUMNS, build_training_frame
+from models.evaluation import walk_forward_splits
 
 
 def _synthetic_features_and_processed():
@@ -206,3 +208,140 @@ def test_bad_orientation_raises_value_error():
 
     with pytest.raises(ValueError, match="exactly one home row"):
         build_training_frame(features, processed)
+
+
+# --------------------------------------------------------------------------
+# Baselines
+# --------------------------------------------------------------------------
+
+
+def _baseline_fixture() -> pd.DataFrame:
+    """4 games with hand-computable baseline outcomes.
+
+    g1: home win% better, away TS% better, home WON
+    g2: away win% better, home TS% better, away WON
+    g3: win% tie, TS% tie (ties -> pick home), home WON
+    g4: away win% & TS% better, home WON (an upset)
+    """
+    return pd.DataFrame(
+        [
+            {
+                "home_rolling_win_pct": 0.6,
+                "away_rolling_win_pct": 0.4,
+                "home_rolling_ts_pct": 0.55,
+                "away_rolling_ts_pct": 0.60,
+                "label": 1,
+            },
+            {
+                "home_rolling_win_pct": 0.3,
+                "away_rolling_win_pct": 0.7,
+                "home_rolling_ts_pct": 0.62,
+                "away_rolling_ts_pct": 0.50,
+                "label": 0,
+            },
+            {
+                "home_rolling_win_pct": 0.5,
+                "away_rolling_win_pct": 0.5,
+                "home_rolling_ts_pct": 0.58,
+                "away_rolling_ts_pct": 0.58,
+                "label": 1,
+            },
+            {
+                "home_rolling_win_pct": 0.2,
+                "away_rolling_win_pct": 0.9,
+                "home_rolling_ts_pct": 0.45,
+                "away_rolling_ts_pct": 0.70,
+                "label": 1,
+            },
+        ]
+    )
+
+
+def test_baseline_accuracies_hand_computed():
+    acc = baseline_accuracies(_baseline_fixture())
+    # always_home -> [1,1,1,1] vs labels [1,0,1,1] -> 3/4
+    assert acc["always_home"] == 0.75
+    # better_win_pct -> g1:1 g2:0 g3:1(tie) g4:0 vs [1,0,1,1] -> 3/4
+    assert acc["better_win_pct"] == 0.75
+    # better_ts_pct  -> g1:0 g2:1 g3:1(tie) g4:0 vs [1,0,1,1] -> 1/4
+    assert acc["better_ts_pct"] == 0.25
+
+
+def test_baseline_accuracies_empty_frame_is_zeros():
+    acc = baseline_accuracies(pd.DataFrame())
+    assert acc == {"always_home": 0.0, "better_win_pct": 0.0, "better_ts_pct": 0.0}
+
+
+# --------------------------------------------------------------------------
+# Walk-forward splitter — the spec-flagged second leakage surface
+# --------------------------------------------------------------------------
+
+
+def _dated_frame() -> pd.DataFrame:
+    """10 distinct dates; 2026-04-05 has TWO games (same-day-not-split test)."""
+    rows = []
+    gid = 0
+    for day in range(1, 11):
+        n_games = 2 if day == 5 else 1
+        for _ in range(n_games):
+            gid += 1
+            rows.append(
+                {
+                    "game_id": f"G{gid}",
+                    "game_date": pd.Timestamp("2026-04-01")
+                    + pd.Timedelta(days=day - 1),
+                    "label": gid % 2,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_walk_forward_never_leaks_future_into_train():
+    """THE invariant: every test game is strictly after every training
+    game, for every fold. This is the splitter's leakage guard."""
+    frame = _dated_frame()
+    splits = walk_forward_splits(frame, n_splits=4)
+    ordered = frame.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+
+    assert len(splits) == 4
+    prev_train_size = 0
+    for train_idx, test_idx in splits:
+        train_dates = ordered.loc[train_idx, "game_date"]
+        test_dates = ordered.loc[test_idx, "game_date"]
+        # Strict: max train date < min test date (date-boundary split).
+        assert train_dates.max() < test_dates.min()
+        # Expanding window: train set grows every fold.
+        assert len(train_idx) > prev_train_size
+        prev_train_size = len(train_idx)
+        # No game_id appears in both sides of a fold.
+        assert set(train_idx).isdisjoint(set(test_idx))
+
+
+def test_walk_forward_does_not_split_a_single_day():
+    """2026-04-05's two games must land entirely on one side of any
+    fold boundary — a calendar day is never split train/test."""
+    frame = _dated_frame()
+    ordered = frame.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+    day5 = pd.Timestamp("2026-04-05")
+    for train_idx, test_idx in walk_forward_splits(frame, n_splits=4):
+        in_train = (ordered.loc[train_idx, "game_date"] == day5).sum()
+        in_test = (ordered.loc[test_idx, "game_date"] == day5).sum()
+        # 04-05 contributes to at most one side per fold (never both).
+        assert not (in_train > 0 and in_test > 0)
+
+
+def test_walk_forward_validation():
+    with pytest.raises(ValueError, match="n_splits must be >= 1"):
+        walk_forward_splits(_dated_frame(), n_splits=0)
+    with pytest.raises(ValueError, match="cannot split an empty frame"):
+        walk_forward_splits(pd.DataFrame(), n_splits=4)
+    # 3 distinct dates can't make 4 folds (needs >= 5 distinct dates).
+    tiny = pd.DataFrame(
+        {
+            "game_id": ["A", "B", "C"],
+            "game_date": pd.to_datetime(["2026-04-01", "2026-04-02", "2026-04-03"]),
+            "label": [1, 0, 1],
+        }
+    )
+    with pytest.raises(ValueError, match="distinct game dates"):
+        walk_forward_splits(tiny, n_splits=4)
