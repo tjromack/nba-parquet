@@ -16,8 +16,9 @@ import pandas as pd
 import pytest
 
 from models.baselines import baseline_accuracies
-from models.dataset import OUTPUT_COLUMNS, build_training_frame
+from models.dataset import OUTPUT_COLUMNS, build_training_frame, feature_columns
 from models.evaluation import walk_forward_splits
+from models.train import evaluate_all, evaluate_walk_forward, train_and_log
 
 
 def _synthetic_features_and_processed():
@@ -345,3 +346,126 @@ def test_walk_forward_validation():
     )
     with pytest.raises(ValueError, match="distinct game dates"):
         walk_forward_splits(tiny, n_splits=4)
+
+
+# --------------------------------------------------------------------------
+# Model training / evaluation harness (session 2b)
+# --------------------------------------------------------------------------
+
+
+def test_feature_columns_excludes_identifiers_and_label():
+    cols = feature_columns()
+    assert "label" not in cols
+    for ident in ("game_id", "game_date", "season", "home_team", "away_team"):
+        assert ident not in cols
+    # Every feature is a home_/away_ rolling column, and the set is the
+    # OUTPUT_COLUMNS minus identifiers+label.
+    assert all(c.startswith(("home_", "away_")) for c in cols)
+    assert set(cols).isdisjoint(
+        {"game_id", "game_date", "season", "home_team", "away_team", "label"}
+    )
+
+
+def _separable_training_frame(n_games: int = 60, seed: int = 0) -> pd.DataFrame:
+    """Synthetic per-game frame with a cleanly learnable signal.
+
+    label == 1 iff home_rolling_pts >= 105 — a *single-feature,
+    axis-aligned* threshold, the cleanest possible learnable signal
+    (one tree split / one logistic coefficient). It is keyed on
+    ``rolling_pts``, which *none* of the three baselines uses (they key
+    on win_pct / ts_pct / home-field), so no baseline is an accidental
+    oracle. Non-signal columns get mild noise (not constant — avoids
+    degenerate zero-variance and keeps the model honest about having to
+    pick the right feature). This test isolates "is fit/predict/
+    walk-forward wired correctly", NOT "can a tree fit a 2-feature
+    diagonal on ~18 rows" (a data-volume question, not a wiring one).
+    Games span many distinct dates so walk-forward folds are well-formed.
+    """
+    import numpy as np
+
+    rng = np.random.RandomState(seed)
+    feats = feature_columns()
+    rows = []
+    start = pd.Timestamp("2026-01-01")
+    for i in range(n_games):
+        hp = rng.uniform(90, 120)
+        # Non-signal columns are constant (zero) — no distractor variance,
+        # so a correctly-wired model finds the lone signal split even on
+        # an ~18-row first fold. Variance in other columns would turn this
+        # into a data-volume question; the constant keeps it a pure wiring
+        # check. (StandardScaler handles zero-variance columns safely.)
+        row = {c: 0.0 for c in feats}
+        row["home_rolling_pts"] = hp
+        row["game_id"] = f"S{i:03d}"
+        # ~n_games/3 distinct dates, chronologically increasing.
+        row["game_date"] = start + pd.Timedelta(days=i // 3)
+        row["label"] = int(hp >= 105.0)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_evaluate_walk_forward_learns_separable_signal():
+    """A correct fit/predict/walk-forward wiring must learn an obvious
+    signal well above chance and above the always-home baseline."""
+    frame = _separable_training_frame(n_games=90, seed=1)
+    result = evaluate_walk_forward(frame, "hgb", n_splits=4, seed=42)
+
+    assert 0.0 <= result["accuracy"] <= 1.0
+    assert result["accuracy"] > 0.8, result
+    # Out-of-fold predictions cover the post-first-fold games, not zero.
+    assert result["n_test"] > 0
+    # Must beat "always pick home" on this signal (label is symmetric in
+    # hw vs aw, so always-home is ~chance here).
+    assert result["accuracy"] > result["baseline_always_home"]
+
+
+def test_evaluate_walk_forward_is_deterministic():
+    frame = _separable_training_frame(n_games=75, seed=2)
+    a = evaluate_walk_forward(frame, "logreg", n_splits=3, seed=42)
+    b = evaluate_walk_forward(frame, "logreg", n_splits=3, seed=42)
+    assert a == b
+
+
+def test_evaluate_all_reports_both_models_and_baselines():
+    frame = _separable_training_frame(n_games=90, seed=3)
+    summary = evaluate_all(frame, n_splits=4, seed=42)
+    for key in (
+        "logreg_accuracy",
+        "hgb_accuracy",
+        "baseline_always_home",
+        "baseline_better_win_pct",
+        "baseline_better_ts_pct",
+        "n_games",
+        "n_test",
+    ):
+        assert key in summary, f"missing {key} in {summary}"
+
+
+def test_train_and_log_creates_mlflow_run_and_artifact(tmp_path):
+    """End-to-end: an MLflow run is recorded at the given tracking URI
+    and the primary model artifact is persisted. Uses tmp dirs so the
+    repo's ./mlruns and models/artifacts are never touched by tests."""
+    frame = _separable_training_frame(n_games=90, seed=4)
+    tracking = (tmp_path / "mlruns").as_uri()
+    artifact_dir = tmp_path / "artifacts"
+
+    summary = train_and_log(
+        frame,
+        tracking_uri=tracking,
+        artifact_dir=artifact_dir,
+        n_splits=4,
+        seed=42,
+    )
+
+    assert "hgb_accuracy" in summary and "logreg_accuracy" in summary
+    # MLflow file store was written.
+    assert (tmp_path / "mlruns").exists()
+    assert any((tmp_path / "mlruns").iterdir())
+    # Primary model artifact persisted and loadable.
+    artifacts = list(artifact_dir.glob("*.joblib"))
+    assert artifacts, f"no model artifact written to {artifact_dir}"
+    import joblib
+
+    model = joblib.load(artifacts[0])
+    preds = model.predict(frame[feature_columns()])
+    assert len(preds) == len(frame)

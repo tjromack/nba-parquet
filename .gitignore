@@ -18,6 +18,11 @@ metastore_db/
 derby.log
 .hadoop/
 out/
+# MLflow local file store + persisted model artifacts — both are
+# reproducible from a clean clone via `python -m models.train`, so they
+# are build outputs, not source.
+mlruns/
+models/artifacts/
 infra/airflow.env
 notebooks/
 # docs/ is intentionally tracked — holds PROJECT_QA.md and any human-authored

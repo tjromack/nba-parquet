@@ -50,6 +50,23 @@ OUTPUT_COLUMNS: list[str] = (
     + ["label"]
 )
 
+# Identifiers / target — never fed to the model. Everything else in
+# OUTPUT_COLUMNS (the home_* / away_* lagged rolling features) is.
+_NON_FEATURE_COLUMNS = frozenset(
+    ["game_id", "game_date", "season", "home_team", "away_team", "label"]
+)
+
+
+def feature_columns() -> list[str]:
+    """The model input columns — single source of truth.
+
+    Defined by *exclusion* (everything in OUTPUT_COLUMNS that isn't an
+    identifier or the label) so a new rolling feature added upstream is
+    automatically picked up, and an identifier can never accidentally
+    leak in as a predictor.
+    """
+    return [c for c in OUTPUT_COLUMNS if c not in _NON_FEATURE_COLUMNS]
+
 
 def _empty_training_frame() -> pd.DataFrame:
     """Empty frame with the full output schema (off-day / cold-start safe)."""

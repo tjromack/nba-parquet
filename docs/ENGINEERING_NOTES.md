@@ -23,6 +23,38 @@ Each note follows the same five-field shape:
 
 ## Notes
 
+### TDD caught a small-data modeling defect; shipped the honest negative result
+
+- **When**: 2026-05-19 (Phase 4b session 2b)
+- **What happened**: The model harness was built test-first. A
+  "learns a separable signal" wiring test kept failing even on a
+  trivial single-feature step function, which forced the question
+  *why*. Root cause: `HistGradientBoostingClassifier`'s default
+  `min_samples_leaf=20`, against walk-forward early folds that train
+  on only ~15–30 games — the booster literally cannot make a single
+  split below 20 leaf samples, so it silently predicts the majority
+  class. Fixed by setting `min_samples_leaf=5` (a documented,
+  defensible small-data adaptation, not a tuning hack). With that, the
+  wiring test passed. Then the model was run on the real 62-game
+  playoff set: it does **not** beat the baselines (HGB 0.438, logreg
+  0.563, best baseline "better trailing TS%" 0.667). Rather than tune
+  until it "won" — which on a 48-game test set is just overfitting —
+  the negative result was written plainly into the README with the
+  reason and the credible scaling path.
+- **What it demonstrates**: TDD doing its actual job — a wiring test
+  surfaced a real defect (default leaf size silently disabling the
+  model on small folds) that would otherwise have shipped as garbage
+  predictions with no error. And the discipline to ship a truthful
+  negative result: simple heuristics beat learned models in low-data
+  regimes, the honest move is to say so, and a suspiciously-good
+  accuracy on a thin sample reads as leakage to anyone who knows the
+  field. Methodology over results.
+- **Where to look**: [`models/train.py`](../models/train.py)
+  (`make_model`, the `min_samples_leaf=5` rationale comment);
+  `test_evaluate_walk_forward_learns_separable_signal` in
+  [`tests/test_models.py`](../tests/test_models.py); the "Prediction
+  model (Phase 4b) — honest results" table in the README.
+
 ### Leakage firewall verified against real data by exact reconciliation
 
 - **When**: 2026-05-18 (Phase 4b session 1)

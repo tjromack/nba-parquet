@@ -136,6 +136,24 @@ Sorted by trailing 10-game true-shooting %:
 
 NYK has the first full 10-game window (8-2 stretch at .630 TS%). OKC's still perfect at 8-0 with .628 TS%. SAS rounds out the top three at .591 across their own full window. Three of the six remaining playoff teams. The remaining ten are out — series-elimination state is computed live from the processed layer's win/loss tallies and surfaced as the dashboard's ACTIVE / OUT badges.
 
+### Prediction model (Phase 4b) — honest results
+
+The features layer was built to feed a winner-prediction model. It's built (`models/`), evaluated with leak-free walk-forward CV, and tracked in MLflow. **On the playoff-only data it does not beat the simple baselines — and that's reported here rather than hidden.**
+
+| Predictor | Walk-forward accuracy (48 test games) |
+|---|---|
+| Baseline: better trailing TS% | **0.667** |
+| Baseline: better trailing win % | 0.583 |
+| Baseline: always pick home | 0.542 |
+| Logistic regression | 0.563 |
+| HistGradientBoosting | 0.438 |
+
+This is the *expected* outcome of doing ML correctly on insufficient data, not a defect. Walk-forward training folds are ~15–30 games; with that little data a learned model overfits and a robust heuristic ("whoever's been shooting better") wins. The honest move is to **state this and not tune until the model "wins"** — torturing a 48-game test set into a good number would just be overfitting that any reviewer who knows the field would read as leakage.
+
+What this demonstrates is the *methodology*, which is identical at any data scale: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), honest baselines named up front, deterministic + MLflow-tracked runs, and the discipline to ship a negative result truthfully. The credible path to meaningful numbers is the regular-season bulk-load (~1,200+ games vs. 62) — a data-volume change that requires **zero model-code changes**, which is itself the point.
+
+See [`models/`](models/) and [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) for the leakage firewall and the small-data adaptations the real data forced.
+
 ---
 
 ## Quick Start

@@ -211,23 +211,26 @@ before anything else is trusted.
 >   inside an sklearn `Pipeline`) applied identically to every model so
 >   the comparison stays fair.
 
-- [ ] **Baselines first, before any model.** Report accuracy / log-loss for:
-  (a) always pick home team (measured: 0.541 — see note above),
-  (b) always pick the team with the better trailing `rolling_win_pct`,
-  (c) always pick the better trailing `rolling_ts_pct`. The model has to
-  beat these to be worth anything — naming them up front is the honest
-  framing.
-- [ ] Model: logistic-regression baseline, then `sklearn`
-  `HistGradientBoostingClassifier` (or `xgboost`). Fixed `random_state`;
-  deterministic and reproducible.
-- [ ] **Time-series evaluation only.** Expanding-window walk-forward: train
-  on games up to date D, test on games after D, step forward. NEVER random
-  k-fold (leakage). Metrics: accuracy, log loss, Brier score, a calibration
-  curve, and the model-vs-baseline delta.
-- [ ] **MLflow** experiment tracking: each run logs params, metrics, the
-  baseline deltas, and the model artifact. Add `mlflow` to
-  `requirements.txt`; document `mlflow ui` in the README. Runs must be
-  reproducible from a clean clone.
+- [x] **Baselines first, before any model** (`models/baselines.py`,
+  session 2a): always-home, better trailing `rolling_win_pct`, better
+  trailing `rolling_ts_pct`. On real 62-game data: 0.542 / 0.583 /
+  **0.667** respectively.
+- [x] Model: logistic-regression + `HistGradientBoostingClassifier`
+  in sklearn Pipelines with a shared median imputer; fixed
+  `random_state`; deterministic (exact-equality determinism test).
+  Small-data adaptation: HGB `min_samples_leaf=5` (default 20 disabled
+  the model on ~15-30-game walk-forward folds — caught by TDD).
+- [x] **Time-series evaluation only** (`models/evaluation.py`,
+  session 2a + harness in `train.py`). Strict date-boundary
+  walk-forward; metrics accuracy / log loss / Brier + model-vs-baseline
+  delta. On real data the models LOSE to the best baseline
+  (logreg −0.104, hgb −0.229) — reported honestly in the README, not
+  tuned away. Calibration curve deferred to the optional eval notebook.
+- [x] **MLflow** experiment tracking (`train_and_log`): local file
+  store (`./mlruns`, gitignored), experiment `nba-parquet-winner`,
+  logs params + all metrics + the persisted model artifact. Runs
+  reproducible from a clean clone (`python -m models.train`).
+  `mlflow ui` doc note → still TODO with session 2c README pass.
 - [ ] New `streamlit_app.py` view — **"Predictions"**: for recent/upcoming
   games show predicted winner, win probability, and the rolling features
   that drove it. Closes the narrative loop visually. Reads the persisted
@@ -243,10 +246,13 @@ before anything else is trusted.
     history is dropped, not half-populated.
   - [x] Data-quality guard: corrupt orientation (two home rows for one
     game) raises `ValueError`.
-  - [ ] Baseline functions return sane accuracies on a hand-built
-    fixture. *(session 2)*
-  - [ ] Walk-forward splitter never puts a test game chronologically
-    before any training game. *(session 2)*
+  - [x] Baseline functions return sane accuracies on a hand-built
+    fixture (session 2a) + harness tests: separable-signal wiring
+    check, exact-equality determinism, evaluate_all key coverage,
+    end-to-end MLflow-run + artifact-loads-and-predicts (session 2b).
+  - [x] Walk-forward splitter never puts a test game chronologically
+    before any training game (session 2a; date-boundary + same-day
+    never split).
 - [ ] Optional `notebooks/model_eval.ipynb` — calibration plot, feature
   importance, error analysis by situation (home/away, series game number).
 - [ ] Conventions to preserve (same discipline as the ETL layer): pure
