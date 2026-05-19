@@ -8,7 +8,7 @@
 | **Phase 2 — Airflow DAG + Docker Compose** | ✅ shipped | [`46377d1`](https://github.com/tjromack/nba-parquet/commit/46377d1) |
 | **Phase 3 — Rolling features + dynamic partition overwrite** | ✅ shipped | [`efa1c3b`](https://github.com/tjromack/nba-parquet/commit/efa1c3b) |
 | Phase 4 — Real AWS deploy | ⏳ optional, low priority | — |
-| **Phase 4b — Prediction model** (parked, fully scoped) | ⏳ next major lift — open the Backlog section, start test-first | see Backlog |
+| **Phase 4b — Prediction model** | ✅ shipped (v1) — leak-free frame, baselines, walk-forward, MLflow, Streamlit Predictions view; honest negative result reported | see Backlog |
 | **Phase 5 — Polish / CI / docs / dashboard** | ✅ mostly shipped | multiple commits, see below |
 
 **Phase 5 sub-status:**
@@ -183,9 +183,10 @@ before anything else is trusted.
   - [ ] `models/train.py` — fits baseline + model, runs time-series
     evaluation, logs everything to MLflow, persists the chosen model
     artifact. *(session 2)*
-  - [ ] `models/predict.py` — loads the persisted model, scores upcoming /
-    recent games, returns predicted winner + probability + the feature
-    vector that drove it (for the Streamlit view). *(session 2/3)*
+  - [x] `models/predict.py` (session 2c) — `load_model` (graceful None
+    if no artifact), `latest_team_features`, `predict_matchup`
+    (forward-looking hypothetical, no leakage), `score_recent_games`
+    (generic). Honest OOF scoring lives in `train.oof_scored_frame`.
 - [x] Labels: home/away orientation + `label` recovered from `processed`
   (`is_home` + `win`); data-quality guard raises `ValueError` unless each
   game has exactly one home row and one away row.
@@ -230,11 +231,16 @@ before anything else is trusted.
   store (`./mlruns`, gitignored), experiment `nba-parquet-winner`,
   logs params + all metrics + the persisted model artifact. Runs
   reproducible from a clean clone (`python -m models.train`).
-  `mlflow ui` doc note → still TODO with session 2c README pass.
-- [ ] New `streamlit_app.py` view — **"Predictions"**: for recent/upcoming
-  games show predicted winner, win probability, and the rolling features
-  that drove it. Closes the narrative loop visually. Reads the persisted
-  model + `predict.py`; degrades gracefully if no model artifact present.
+  `mlflow ui` doc note added to the README (session 2c).
+- [x] New `streamlit_app.py` view — **"Predictions"** (session 2c):
+  matchup explorer (model pick + win prob + driving features for any
+  two teams) and an **out-of-fold** scorecard (model pick vs actual).
+  Leads with the honest "trails the baseline on thin data" banner;
+  degrades gracefully with run instructions if no artifact. Scorecard
+  uses `oof_scored_frame` not the all-data model — a smoke test caught
+  that scoring the persisted (all-data) model against the training
+  games reads ~100% in-sample and would contradict the README's honest
+  0.44; OOF scoring is consistency-tested to equal walk-forward.
 - [ ] Tests (`tests/test_models.py`):
   - [x] **Leakage guard (written first, red→green):** synthetic 2-team
     4-game sequence with decodable rolling values; asserts the training
@@ -260,11 +266,13 @@ before anything else is trusted.
   schema-first where practical, lint-clean, CI green, lazy imports if any
   of this is ever wired into the DAG.
 
-**Definition of done (v1):** `python -m models.train` runs from a clean
-clone, logs an MLflow run, persists a model that beats all three baselines
-on walk-forward eval (or the README honestly states it doesn't and why),
-the leakage test passes, and the Streamlit "Predictions" view renders for
-recent games.
+**Definition of done (v1) — ✅ MET:** `python -m models.train` runs from a
+clean clone, logs an MLflow run, persists the model; it does NOT beat the
+baselines and the README states that plainly with the reason and scaling
+path (the spec-sanctioned honest-negative branch); the leakage test passes;
+the Streamlit "Predictions" view renders (matchup explorer + out-of-fold
+scorecard). 54 tests pass, lint + CI green. Remaining Phase 4b items
+(optional eval notebook) are non-blocking polish.
 
 **Data-volume honesty (state this in the README, don't hide it):** playoff-
 only data is thin (~65 games). Phase 4b is a demonstration of *correct ML

@@ -1,11 +1,12 @@
 """Live dashboard for the nba-parquet pipeline.
 
 Reads the ``processed/`` and ``features/`` Parquet zones produced by the
-ETL DAG (or by ``scripts/run_local.py``) and surfaces them in four views:
+ETL DAG (or by ``scripts/run_local.py``) and surfaces them in five views:
 
   - Leaderboard     - latest rolling-feature snapshot per team
   - Team detail     - one team's rolling TS%, win rate, pts over time
   - Head-to-head    - side-by-side comparison of two teams
+  - Predictions     - Phase 4b winner model: matchup explorer + scorecard
   - Data explorer   - filterable view of the raw processed layer
 
 Run locally::
@@ -251,7 +252,7 @@ if _ts is not None:
 
 view = st.sidebar.radio(
     "View",
-    ["Leaderboard", "Team detail", "Head-to-head", "Data explorer"],
+    ["Leaderboard", "Team detail", "Head-to-head", "Predictions", "Data explorer"],
 )
 
 st.sidebar.markdown("---")
@@ -552,6 +553,120 @@ elif view == "Head-to-head":
         _trajectory_chart("rolling_win_pct", "Rolling win rate", 0.0, 1.0),
         use_container_width=True,
     )
+
+elif view == "Predictions":
+    from models.predict import latest_team_features, load_model, predict_matchup
+    from models.train import oof_scored_frame
+
+    st.title("Predictions — winner model (Phase 4b)")
+    st.warning(
+        "**Honest framing.** On this playoff-only sample the model "
+        "*underperforms* the simple 'better trailing TS%' baseline "
+        "(see the Results & Metrics section of the README). This view "
+        "demonstrates the prediction *interface* and the model's actual "
+        "track record — treat the picks as illustrative of methodology, "
+        "not as a betting edge. The credible path to meaningful accuracy "
+        "is more data (regular-season backfill), not tuning this thin "
+        "sample until it looks good."
+    )
+
+    model = load_model()
+    if model is None:
+        st.info(
+            "No trained model artifact found. Generate it with:\n\n"
+            "```\npython -m models.train\n```\n\n"
+            "(The `.joblib` is a gitignored build output — reproducible "
+            "from a clean clone, not committed.)"
+        )
+        st.stop()
+
+    st.subheader("Matchup explorer")
+    st.caption(
+        "Pick two teams; the model predicts a hypothetical next game "
+        "from each team's *latest* rolling-feature snapshot. Forward-"
+        "looking, so no leakage — there's no actual outcome to compare."
+    )
+    latest = latest_team_features(features)
+    teams = sorted(latest["team_abbreviation"].unique())
+    cols = st.columns(2)
+    home_team = cols[0].selectbox("Home team", teams, index=0)
+    away_team = cols[1].selectbox("Away team", teams, index=min(1, len(teams) - 1))
+
+    if home_team == away_team:
+        st.warning("Pick two different teams.")
+    else:
+        home_row = latest[latest["team_abbreviation"] == home_team].iloc[0]
+        away_row = latest[latest["team_abbreviation"] == away_team].iloc[0]
+        pred = predict_matchup(model, home_row, away_row)
+        prob = pred["home_win_prob"]
+        winner = home_team if pred["predicted_home_win"] else away_team
+        m1, m2 = st.columns(2)
+        m1.metric("Model pick", winner)
+        m2.metric(f"{home_team} (home) win probability", f"{prob:.1%}")
+        drivers = pd.DataFrame(
+            {
+                "feature": [
+                    c.replace("home_rolling_", "").replace("away_rolling_", "")
+                    for c in pred["features"]
+                    if c.startswith("home_")
+                ],
+            }
+        )
+        drivers["home"] = [
+            pred["features"][c] for c in pred["features"] if c.startswith("home_")
+        ]
+        drivers["away"] = [
+            pred["features"][c] for c in pred["features"] if c.startswith("away_")
+        ]
+        st.caption("Latest rolling features driving this prediction")
+        st.dataframe(drivers, use_container_width=True, hide_index=True)
+
+    st.subheader("Out-of-fold scorecard — model vs. reality")
+    st.caption(
+        "Each game scored by a model that did **not** train on it "
+        "(walk-forward test folds). This is the honest track record — "
+        "in-sample scoring would trivially read ~100% and contradict "
+        "the real number. The accuracy here matches the README's "
+        "Phase 4b table by construction."
+    )
+    from models.dataset import build_training_frame
+
+    frame = build_training_frame(features, processed)
+    if frame.empty or len(frame["game_date"].unique()) < 5:
+        st.info(
+            "Not enough game history yet to form walk-forward folds "
+            "(need ≥ 5 distinct game dates)."
+        )
+    else:
+        scored = oof_scored_frame(frame)
+        acc = scored["correct"].mean()
+        st.metric(
+            "Out-of-fold model accuracy",
+            f"{acc:.1%}",
+            help="On thin playoff data this trails the best baseline "
+            "(~0.67) — that's the honest, expected result, reported "
+            "rather than hidden.",
+        )
+        show = scored.sort_values("game_date", ascending=False).head(20).copy()
+        show["game_date"] = show["game_date"].dt.strftime("%Y-%m-%d")
+        show["result"] = show.apply(lambda r: ("✓" if r["correct"] else "✗"), axis=1)
+        show["actual"] = show["label"].map({1: "home won", 0: "away won"})
+        show["model_pick"] = show["model_pick"].map({1: "home", 0: "away"})
+        st.dataframe(
+            show[
+                [
+                    "game_date",
+                    "home_team",
+                    "away_team",
+                    "model_pick",
+                    "model_home_win_prob",
+                    "actual",
+                    "result",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 elif view == "Data explorer":
     st.title("Data explorer — processed layer")

@@ -13,7 +13,7 @@
 >
 > 🛠️ **Engineering notes**: [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — a curated log of notable moments from building and operating this: retry recovery, a column-name regression caught against real data, ESPN reconciliation, the Docker parallel-build race fix, and how the daily-ops script became self-healing.
 >
-> 📊 **Live dashboard**: `streamlit run streamlit_app.py` reads the pipeline's output directly and surfaces a leaderboard, per-team rolling trends, head-to-head comparisons, and a filterable data explorer. See the [Live dashboard](#live-dashboard) section below.
+> 📊 **Live dashboard**: `streamlit run streamlit_app.py` reads the pipeline's output directly and surfaces a leaderboard, per-team rolling trends, head-to-head comparisons, a winner-model **Predictions** view, and a filterable data explorer. See the [Live dashboard](#live-dashboard) section below.
 
 ## Demo at a glance
 
@@ -152,6 +152,15 @@ This is the *expected* outcome of doing ML correctly on insufficient data, not a
 
 What this demonstrates is the *methodology*, which is identical at any data scale: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), honest baselines named up front, deterministic + MLflow-tracked runs, and the discipline to ship a negative result truthfully. The credible path to meaningful numbers is the regular-season bulk-load (~1,200+ games vs. 62) — a data-volume change that requires **zero model-code changes**, which is itself the point.
 
+Reproduce + inspect from a clean clone:
+
+```powershell
+.venv\Scripts\python.exe -m models.train   # walk-forward eval -> ./mlruns, persists models/artifacts/winner_hgb.joblib
+mlflow ui                                   # browse runs/metrics at http://localhost:5000
+```
+
+`mlruns/` and `models/artifacts/` are gitignored build outputs — the run is fully reproducible from source, deterministic (fixed seed). The trained model is then visible in the dashboard's **Predictions** view (matchup explorer + recent-games scorecard).
+
 See [`models/`](models/) and [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) for the leakage firewall and the small-data adaptations the real data forced.
 
 ---
@@ -269,7 +278,7 @@ you don't accidentally clobber a legitimate-but-slow run.
 ## Live dashboard
 
 A Streamlit app reads the pipeline's `processed/` and `features/` Parquet zones
-directly and exposes four views:
+directly and exposes five views:
 
 - **Leaderboard** — latest rolling-feature snapshot per team, sorted by trailing
   TS%, with color gradients on TS% and win rate so hot/cold teams pop at a glance
@@ -277,6 +286,11 @@ directly and exposes four views:
   time as line charts, plus a sortable game-by-game results table
 - **Head-to-head** — pick any two teams, get a side-by-side metric comparison
   plus their rolling-window trajectories overlaid
+- **Predictions** — the Phase 4b winner model: a matchup explorer (model pick +
+  win probability + the driving rolling features for any two teams) and a
+  recent-games scorecard (model pick vs. actual result). Leads with the honest
+  framing that the model trails the baseline on this thin sample; degrades
+  gracefully with run instructions if no trained artifact is present
 - **Data explorer** — filterable view of the raw processed layer for spot-checks
   against external sources like ESPN
 

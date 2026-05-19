@@ -143,6 +143,65 @@ def evaluate_walk_forward(
     }
 
 
+def oof_scored_frame(
+    frame: pd.DataFrame,
+    model_name: str = PRIMARY_MODEL,
+    n_splits: int = DEFAULT_N_SPLITS,
+    seed: int = SEED,
+) -> pd.DataFrame:
+    """Out-of-fold predictions joined back to game metadata.
+
+    The honest "model vs reality" view: each row is scored by a model
+    that did NOT train on it (the walk-forward test folds). Use this for
+    any scorecard — NEVER score the persisted all-data model against the
+    training games, which is in-sample and trivially ~100%, contradicting
+    the real walk-forward accuracy. Games in the first block never appear
+    in a test fold, so they correctly have no OOF prediction and are
+    absent here. Returned chronologically.
+    """
+    feats = feature_columns()
+    ordered = frame.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+    if ordered.empty:
+        cols = [
+            "game_id",
+            "game_date",
+            "home_team",
+            "away_team",
+            "label",
+            "model_home_win_prob",
+            "model_pick",
+            "correct",
+        ]
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
+
+    # Carry whatever identifier columns exist — real build_training_frame
+    # output has home_team/away_team; minimal synthetic test frames may
+    # only have game_id/game_date/label. The accuracy consistency with
+    # walk-forward is independent of which metadata tags along.
+    meta_cols = [
+        c
+        for c in ("game_id", "game_date", "home_team", "away_team", "label")
+        if c in ordered.columns
+    ]
+
+    splits = walk_forward_splits(frame, n_splits=n_splits)
+    pieces = []
+    for train_idx, test_idx in splits:
+        train = ordered.loc[train_idx]
+        test = ordered.loc[test_idx]
+        model = make_model(model_name, seed)  # fresh per fold, train-only fit
+        model.fit(train[feats], train["label"])
+        proba = model.predict_proba(test[feats])[:, 1]
+        piece = test[meta_cols].copy()
+        piece["model_home_win_prob"] = proba.round(4)
+        piece["model_pick"] = (proba >= 0.5).astype(int)
+        pieces.append(piece)
+
+    out = pd.concat(pieces, ignore_index=True)
+    out["correct"] = (out["model_pick"] == out["label"]).astype(int)
+    return out.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+
+
 def evaluate_all(
     frame: pd.DataFrame, n_splits: int = DEFAULT_N_SPLITS, seed: int = SEED
 ) -> dict:

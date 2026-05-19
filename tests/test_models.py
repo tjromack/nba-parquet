@@ -16,9 +16,25 @@ import pandas as pd
 import pytest
 
 from models.baselines import baseline_accuracies
-from models.dataset import OUTPUT_COLUMNS, build_training_frame, feature_columns
+from models.dataset import (
+    OUTPUT_COLUMNS,
+    ROLLING_FEATURE_COLS,
+    build_training_frame,
+    feature_columns,
+)
 from models.evaluation import walk_forward_splits
-from models.train import evaluate_all, evaluate_walk_forward, train_and_log
+from models.predict import (
+    latest_team_features,
+    load_model,
+    predict_matchup,
+    score_recent_games,
+)
+from models.train import (
+    evaluate_all,
+    evaluate_walk_forward,
+    persist_model,
+    train_and_log,
+)
 
 
 def _synthetic_features_and_processed():
@@ -469,3 +485,100 @@ def test_train_and_log_creates_mlflow_run_and_artifact(tmp_path):
     model = joblib.load(artifacts[0])
     preds = model.predict(frame[feature_columns()])
     assert len(preds) == len(frame)
+
+
+# --------------------------------------------------------------------------
+# Scoring / prediction layer (session 2c)
+# --------------------------------------------------------------------------
+
+
+def _fitted_model(tmp_path):
+    """Persist + reload a real model trained on the separable fixture."""
+    frame = _separable_training_frame(n_games=90, seed=7)
+    persist_model(frame, "hgb", tmp_path / "artifacts", seed=42)
+    return load_model(tmp_path / "artifacts"), frame
+
+
+def test_load_model_returns_none_when_absent(tmp_path):
+    # Nothing persisted yet -> graceful None (Streamlit degrades on this).
+    assert load_model(tmp_path / "nope") is None
+
+
+def test_load_model_roundtrip(tmp_path):
+    model, _ = _fitted_model(tmp_path)
+    assert model is not None
+    assert hasattr(model, "predict_proba")
+
+
+def test_latest_team_features_one_row_per_team_most_recent():
+    feats, _ = _synthetic_features_and_processed()
+    latest = latest_team_features(feats)
+    # HOME + AWAY, one row each, and it's their last (game_index 4) row.
+    assert sorted(latest["team_abbreviation"]) == ["AWAY", "HOME"]
+    home = latest[latest["team_abbreviation"] == "HOME"].iloc[0]
+    # game 4 rolling_pts for HOME = 100 + 4 = 104 (the most recent).
+    assert home["rolling_pts"] == 104.0
+
+
+def test_predict_matchup_shape_and_bounds(tmp_path):
+    model, _ = _fitted_model(tmp_path)
+    feats, _ = _synthetic_features_and_processed()
+    latest = latest_team_features(feats)
+    home = latest[latest["team_abbreviation"] == "HOME"].iloc[0]
+    away = latest[latest["team_abbreviation"] == "AWAY"].iloc[0]
+
+    result = predict_matchup(model, home, away)
+    assert 0.0 <= result["home_win_prob"] <= 1.0
+    assert isinstance(result["predicted_home_win"], bool)
+    # Driving feature vector exposes both sides' rolling cols.
+    assert set(result["features"]) == {
+        f"{side}_{c}" for side in ("home", "away") for c in ROLLING_FEATURE_COLS
+    }
+
+
+def test_score_recent_games_adds_columns_preserves_rows(tmp_path):
+    model, frame = _fitted_model(tmp_path)
+    scored = score_recent_games(model, frame)
+    assert len(scored) == len(frame)
+    for col in ("model_home_win_prob", "model_pick", "correct"):
+        assert col in scored.columns
+    assert scored["model_pick"].isin([0, 1]).all()
+    assert scored["correct"].isin([0, 1]).all()
+    # 'correct' is exactly pick == label.
+    assert (scored["correct"] == (scored["model_pick"] == scored["label"])).all()
+
+
+def test_score_recent_games_empty_frame_safe(tmp_path):
+    model, _ = _fitted_model(tmp_path)
+    empty = build_training_frame(pd.DataFrame(), pd.DataFrame())
+    scored = score_recent_games(model, empty)
+    assert scored.empty
+    for col in ("model_home_win_prob", "model_pick", "correct"):
+        assert col in scored.columns
+
+
+def test_oof_scored_frame_matches_walk_forward_accuracy():
+    """The OOF scorecard MUST equal the walk-forward accuracy — this is
+    the guard against accidentally showing in-sample (~100%) numbers in
+    the dashboard, which would contradict the project's honest metric."""
+    from models.train import oof_scored_frame
+
+    frame = _separable_training_frame(n_games=90, seed=9)
+    wf = evaluate_walk_forward(frame, "hgb", n_splits=4, seed=42)
+    scored = oof_scored_frame(frame, "hgb", n_splits=4, seed=42)
+
+    assert len(scored) == wf["n_test"]
+    assert round(scored["correct"].mean(), 6) == wf["accuracy"]
+    assert (scored["correct"] == (scored["model_pick"] == scored["label"])).all()
+    # First-block games never appear in a test fold -> absent from OOF.
+    assert len(scored) < len(frame)
+
+
+def test_oof_scored_frame_empty_safe():
+    from models.train import oof_scored_frame
+
+    empty = build_training_frame(pd.DataFrame(), pd.DataFrame())
+    out = oof_scored_frame(empty)
+    assert out.empty
+    for col in ("game_id", "model_pick", "correct"):
+        assert col in out.columns
