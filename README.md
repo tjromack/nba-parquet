@@ -248,6 +248,29 @@ make airflow-rebuild   # rebuild the image after editing requirements.txt or Doc
 make airflow-down      # stop the stack
 ```
 
+### Bulk-load an entire season
+
+For backfilling a full season (or scaling the prediction model beyond the
+playoff sample), `scripts/bulk_load_season.py` runs the same ingest →
+aggregate → features chain as the daily DAG but pulls every game for the
+season+type in one orchestrated pass:
+
+```powershell
+$env:LOCAL_OUTPUT_DIR = "$PWD\out"
+$env:NBA_SEASON = "2025-26"
+$env:NBA_SEASON_TYPE = "Regular Season"
+.venv\Scripts\python.exe scripts\bulk_load_season.py
+```
+
+One `LeagueGameLog` call enumerates the schedule; one
+`BoxScoreTraditionalV2` call per game with the standard 0.6s sleep
+between them. Wall-clock is roughly `0.6s × n_games` for the ingest leg
+(~12-20 min for a full regular season), plus Spark aggregation. Output
+lands under the identical partition layout as the daily path
+(`raw/nba/box_scores/season=YYYY/game_date=YYYY-MM-DD/`), so daily and
+bulk writes interleave cleanly and the existing transform/features
+pipeline reads them as one dataset.
+
 ### Daily catch-up during the season
 
 The DAG is `@daily` with `catchup=False`, so if the scheduler is down at trigger

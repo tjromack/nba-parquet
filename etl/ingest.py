@@ -139,6 +139,24 @@ def _normalize_player_rows(
     return df[_RAW_COLUMNS]
 
 
+def _list_season_games(season: str, season_type: str) -> pd.DataFrame:
+    """One ``LeagueGameLog`` call for an entire season+type.
+
+    Returns the raw uppercase-column nba_api frame (GAME_ID, GAME_DATE,
+    TEAM_ID, MATCHUP, WL, ...). The bulk-ingest path uses this single
+    call to enumerate all games for the season instead of one per date,
+    saving ~N-1 API calls vs the day-by-day path on a full season.
+    """
+    from nba_api.stats.endpoints import LeagueGameLog
+
+    log = LeagueGameLog(
+        season=season,
+        season_type_all_star=season_type,
+        timeout=NBA_API_TIMEOUT_SECONDS,
+    )
+    return log.get_data_frames()[0]
+
+
 def _team_matchup_lookup(
     season: str, season_type: str, game_date: str
 ) -> tuple[dict[str, dict[int, str]], dict[str, dict[int, str]]]:
@@ -232,4 +250,90 @@ def ingest_box_scores(
     sdf = spark.createDataFrame(rows, schema=RAW_BOX_SCORE_SCHEMA)
     sdf.write.mode("overwrite").parquet(output_path)
     logger.info("Wrote %d raw rows to %s", len(rows), output_path)
+    return output_path
+
+
+def ingest_box_scores_bulk(
+    season: str,
+    season_type: str,
+    s3_bucket: str,
+    spark: SparkSession,
+) -> str:
+    """Bulk-ingest every game for ``season`` + ``season_type`` in one shot.
+
+    Lays down the same partition layout as the per-date ``ingest_box_scores``
+    (``season=YYYY/game_date=YYYY-MM-DD/``) so downstream ``transform`` /
+    ``write_features`` read identically — bulk and daily output interleave
+    cleanly under ``raw/nba/box_scores/``. Uses a single ``LeagueGameLog``
+    call to enumerate all games, then one ``BoxScoreTraditionalV2`` call per
+    game with ``NBA_API_SLEEP_SECONDS`` between consecutive calls. Writes at
+    the season root with ``partitionBy("season", "game_date")`` and dynamic
+    partition overwrite so only the touched partitions are replaced.
+    """
+    if not s3_bucket and not is_local_mode():
+        raise ValueError("s3_bucket is required when LOCAL_OUTPUT_DIR is not set")
+
+    if not is_local_mode():
+        _apply_s3a_config(spark)
+
+    output_path = resolve_output_uri(s3_bucket, "raw/nba/box_scores")
+
+    games_df = _list_season_games(season, season_type)
+
+    if games_df.empty:
+        logger.warning("No games found for season=%s type=%s", season, season_type)
+        empty = spark.createDataFrame([], RAW_BOX_SCORE_SCHEMA)
+        # No partitionBy: an empty partitioned write leaves zero files and
+        # Spark cannot infer the schema on read. A flat empty Parquet at the
+        # root drops a schema-bearing file so spark.read.parquet works.
+        empty.write.mode("overwrite").parquet(output_path)
+        return output_path
+
+    games_df = games_df.rename(columns={c: c.upper() for c in games_df.columns})
+    matchups: dict[str, dict[int, str]] = {}
+    results: dict[str, dict[int, str]] = {}
+    game_dates: dict[str, str] = {}
+    for game_id, group in games_df.groupby("GAME_ID"):
+        gid = str(game_id)
+        matchups[gid] = dict(zip(group["TEAM_ID"].astype(int), group["MATCHUP"]))
+        results[gid] = dict(zip(group["TEAM_ID"].astype(int), group["WL"]))
+        game_dates[gid] = str(pd.to_datetime(group["GAME_DATE"].iloc[0]).date())
+
+    sorted_gids = sorted(matchups.keys())
+    frames: list[pd.DataFrame] = []
+    for idx, gid in enumerate(sorted_gids):
+        if idx > 0:
+            _rate_limit_sleep()
+        raw_players = _fetch_box_score(gid)
+        normalized = _normalize_player_rows(
+            raw_players,
+            game_id=gid,
+            game_date=game_dates[gid],
+            season=season,
+            season_type=season_type,
+            matchups=matchups.get(gid, {}),
+            results=results.get(gid, {}),
+        )
+        frames.append(normalized)
+
+    combined = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=_RAW_COLUMNS)
+    )
+
+    rows = _to_spark_rows(combined)
+    sdf = spark.createDataFrame(rows, schema=RAW_BOX_SCORE_SCHEMA)
+    (
+        sdf.write.mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .partitionBy("season", "game_date")
+        .parquet(output_path)
+    )
+    logger.info(
+        "Bulk-wrote %d raw rows across %d games to %s",
+        len(rows),
+        len(sorted_gids),
+        output_path,
+    )
     return output_path

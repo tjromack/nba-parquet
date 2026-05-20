@@ -289,6 +289,37 @@ the leakage test against a synthetic sequence FIRST (red), then
 de-risks the entire phase — everything downstream is only trustworthy if
 the training frame is leak-free.
 
+### Regular-season bulk-load (Phase 4b post-script) — session A shipped
+
+The infrastructure is in place: `etl.ingest.ingest_box_scores_bulk` walks
+the entire `LeagueGameLog` for a season+type and partitions raw output
+by `(season, game_date)` so it interleaves cleanly with the daily DAG's
+output. `scripts/bulk_load_season.py` chains ingest → aggregate →
+features end-to-end. Tests cover happy-path (8 rows × 2 dates × 3
+inter-call sleeps), empty season, and missing-bucket guard.
+
+**Session B (run on your machine, ~12-20 min wall-clock):**
+
+```powershell
+$env:LOCAL_OUTPUT_DIR = "$PWD\out"
+$env:NBA_SEASON = "2025-26"
+$env:NBA_SEASON_TYPE = "Regular Season"
+.venv\Scripts\python.exe scripts\bulk_load_season.py
+```
+
+After the load finishes, re-train and refresh metrics:
+
+```powershell
+.venv\Scripts\python.exe -m models.train
+```
+
+Then update README Results & Metrics with the post-scale numbers (the
+2026-05-13 snapshot at N=62 will be stale once the full RS is loaded).
+The expected outcome is the model finally has enough signal to clear
+the better-win-pct baseline at all, OR an even more interesting honest-
+negative result — either way, the methodology numbers (leakage-free,
+walk-forward, deterministic) stay the same.
+
 ### Streamlit Cloud public deployment (deferred)
 
 The local-run model (`streamlit run streamlit_app.py`, screen-share in
