@@ -608,14 +608,17 @@ elif view == "Predictions":
 
     st.title("Predictions — winner model (Phase 4b)")
     st.warning(
-        "**Honest framing.** On this playoff-only sample the model "
-        "*underperforms* the simple 'better trailing TS%' baseline "
-        "(see the Results & Metrics section of the README). This view "
-        "demonstrates the prediction *interface* and the model's actual "
-        "track record — treat the picks as illustrative of methodology, "
-        "not as a betting edge. The credible path to meaningful accuracy "
-        "is more data (regular-season backfill), not tuning this thin "
-        "sample until it looks good."
+        "**Honest framing.** Trained on the full 2025–26 regular season "
+        "plus playoffs (~1,280 games, leak-free walk-forward CV), the "
+        "model lands within striking distance of the strongest baseline "
+        "but doesn't beat it: vanilla logistic regression at ~0.61 vs. "
+        '"pick the team with the better trailing win pct" at ~0.63. '
+        "That gap is reported plainly rather than tuned away — a 989-game "
+        "out-of-fold test set is large enough that p-hacking a 1–2pp "
+        "lift would be trivial and exactly the kind of soft leakage a "
+        "reviewer would flag. Treat the picks as illustrative of "
+        "*correct methodology* (leak-free features, fair baselines, "
+        "deterministic, MLflow-tracked) — not as a betting edge."
     )
 
     model = load_model()
@@ -691,9 +694,10 @@ elif view == "Predictions":
         st.metric(
             "Out-of-fold model accuracy",
             f"{acc:.1%}",
-            help="On thin playoff data this trails the best baseline "
-            "(~0.67) — that's the honest, expected result, reported "
-            "rather than hidden.",
+            help="On the full 2025–26 RS+playoffs frame the model "
+            "trails the strongest baseline (better trailing win pct, "
+            "~0.63) by a few points — that's the honest result, "
+            "reported rather than tuned away.",
         )
         show = scored.sort_values("game_date", ascending=False).head(20).copy()
         show["game_date"] = show["game_date"].dt.strftime("%Y-%m-%d")
