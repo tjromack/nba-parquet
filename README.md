@@ -17,11 +17,11 @@
 
 ## Demo at a glance
 
-Validated end-to-end against the 2025–26 NBA playoffs. The Streamlit dashboard below reads directly off the pipeline's `features/` Parquet zone, sorted by trailing 10-game true-shooting %. Inline bars scale to the column leader so the gap between the top team and the rest is visible at a glance, and an auto-generated "What's notable" callout summarizes the current state (leader, undefeated/winless, eliminated teams) in plain language. The `status` column color-codes each team as **ACTIVE** (green) or **OUT** (red) based on series elimination state:
+Validated end-to-end against the full 2025–26 NBA season (regular season + playoffs, ~2,600 team-game rows, 194 distinct game dates). The Streamlit dashboard below reads directly off the pipeline's `features/` Parquet zone, sorted by trailing 10-game true-shooting %. Inline bars scale to the column leader so the gap between the top team and the rest is visible at a glance, and an auto-generated "What's notable" callout summarizes the current state (leader, undefeated/winless, eliminated teams) in plain language. The `status` column color-codes each team in three states: **ACTIVE** (green, still playing in the playoffs), **OUT** (red, eliminated in the playoffs), and **DNP** (gray, did not play in the playoffs):
 
-![Live Streamlit leaderboard with series tracking](demo%20screenshots/Leaderboard_51426.png)
+![Live Streamlit leaderboard with three-state series tracking](demo%20screenshots/Leaderboard_full_season.png)
 
-Through 2026-05-13 (conference semifinals): NYK leads at .630 TS% over a full 10-game window (8-2 stretch), OKC is undefeated at 8-0 with .628 TS%, SAS sits at .591 over 10 games. Ten teams already eliminated, six still active. Cross-checks against ESPN confirm series records and game counts reconcile exactly. These are the trailing-window signals a survivor / spread / total prediction model would consume downstream.
+Through 2026-05-19 (conference finals): NYK leads at .625 TS% over a full 10-game window (8-2 stretch), SAS sits at .605 over a 10-game RS-finale run despite missing the playoffs, LAC at .592. Four of 16 playoff teams still active, 12 already eliminated. The three-state status column distinguishes "lost in the playoffs" from "didn't make the playoffs" — a distinction that mattered enough to surface a real bug in the elimination logic when the regular-season backfill landed. Cross-checks against ESPN confirm series records reconcile exactly. These are the trailing-window signals a survivor / spread / total prediction model would consume downstream.
 
 ## What / Why / How / For Whom
 
@@ -178,7 +178,11 @@ Reproduce + inspect from a clean clone:
 mlflow ui                                   # browse runs/metrics at http://localhost:5000
 ```
 
-`mlruns/` and `models/artifacts/` are gitignored build outputs — the run is fully reproducible from source, deterministic (fixed seed). The trained model is then visible in the dashboard's **Predictions** view (matchup explorer + recent-games scorecard).
+`mlruns/` and `models/artifacts/` are gitignored build outputs — the run is fully reproducible from source, deterministic (fixed seed). The trained model is then visible in the dashboard's **Predictions** view:
+
+![Predictions view: honest framing banner + matchup explorer](demo%20screenshots/Predictions_full_season.png)
+
+The yellow banner up top is the model's own honesty disclosure — same numbers as the table above, in the user-facing flow rather than buried in the docs. The matchup explorer below lets you score any hypothetical pairing from each team's latest rolling-feature snapshot (forward-looking, no leakage — there's no future outcome to compare against). The scorecard further down the page (not shown) grades the model against the *out-of-fold* walk-forward predictions, never against games it trained on.
 
 See [`models/`](models/) and [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) for the leakage firewall and the small-data adaptations the real data forced.
 
@@ -195,10 +199,10 @@ git clone https://github.com/tjromack/nba-parquet.git
 cd nba-parquet
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -m "not integration"
-# expected: 25 passed, 1 skipped in ~22s
+# expected: 59 passed, 1 skipped in ~35s
 ```
 
-The full 25-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
+The full 59-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
 
 ### Full setup — running the pipeline
 
