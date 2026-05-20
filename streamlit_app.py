@@ -82,23 +82,41 @@ def _color_wl(val: str) -> str:
 
 
 def _color_status(val: str) -> str:
-    """Cell-level color for ACTIVE / OUT team-status tokens."""
+    """Cell-level color for ACTIVE / OUT / DNP team-status tokens."""
     if val == "ACTIVE":
         return "background-color: #1f4d2e; color: #b6e6c5; font-weight: 600"
     if val == "OUT":
         return "background-color: #4d1f1f; color: #e6b6b6; font-weight: 600"
+    if val == "DNP":
+        return "background-color: #2a2a2a; color: #8a8a8a; font-weight: 600"
     return ""
+
+
+def _playoff_only(processed: pd.DataFrame) -> pd.DataFrame:
+    """Scope a processed frame to playoff games only.
+
+    A 4-game playoff series produces one team with 4 losses against a
+    single opponent; the regular season never does (teams play each
+    other 2-4 times max). Without this filter, every helper that looks
+    for "4 losses to one opponent" would treat RS-only teams as alive.
+    Back-compat: if ``season_type`` isn't present (older tests, minimal
+    fixtures), the frame is returned unchanged.
+    """
+    if "season_type" not in processed.columns:
+        return processed
+    return processed[processed["season_type"] == "Playoffs"]
 
 
 def series_summary(processed: pd.DataFrame) -> pd.DataFrame:
     """Per-(team, opponent) series tally with WON / LOST / ACTIVE state.
 
-    A series is detected by grouping all games between two teams within
-    the dataset. State transitions when one side reaches 4 wins (NBA
-    playoff series length). Returns one row per (team, opponent) pair —
-    so a single series between A and B produces two rows (A's view and
-    B's view).
+    A series is detected by grouping all playoff games between two teams
+    within the dataset. State transitions when one side reaches 4 wins
+    (NBA playoff series length). Returns one row per (team, opponent)
+    pair — so a single series between A and B produces two rows (A's
+    view and B's view).
     """
+    processed = _playoff_only(processed)
     if processed.empty:
         return pd.DataFrame(
             columns=[
@@ -132,21 +150,36 @@ def series_summary(processed: pd.DataFrame) -> pd.DataFrame:
 
 
 def team_status(processed: pd.DataFrame) -> dict[str, str]:
-    """Map team abbreviation -> 'ACTIVE' or 'ELIMINATED'.
+    """Map team abbreviation -> 'ACTIVE' / 'ELIMINATED' / 'DNP'.
 
-    A team is eliminated the moment any of their series shows them
-    having lost 4 games. Otherwise they're still alive.
+    Bulk-loading the regular season exposed that the old two-state
+    logic ('any series with 4 losses = ELIMINATED, else ACTIVE') is
+    only valid for playoff data. A team that never played in the
+    playoffs (didn't qualify) trivially has zero series of 4 losses,
+    so it would slide through as 'ACTIVE' — a wrong claim.
+
+    Three states now:
+      ACTIVE       - played in the playoffs, no 4-loss series yet
+      ELIMINATED   - played in the playoffs, lost a 4-game series
+      DNP          - present in processed but never played a playoff game
     """
     if processed.empty:
         return {}
+    playoff_df = _playoff_only(processed)
+    playoff_teams = set(playoff_df["team_abbreviation"].unique())
     series = series_summary(processed)
     eliminated = set(
         series.loc[series["state"] == "LOST", "team_abbreviation"].unique()
     )
-    return {
-        team: ("ELIMINATED" if team in eliminated else "ACTIVE")
-        for team in processed["team_abbreviation"].unique()
-    }
+    statuses: dict[str, str] = {}
+    for team in processed["team_abbreviation"].unique():
+        if team not in playoff_teams:
+            statuses[team] = "DNP"
+        elif team in eliminated:
+            statuses[team] = "ELIMINATED"
+        else:
+            statuses[team] = "ACTIVE"
+    return statuses
 
 
 def generate_commentary(features: pd.DataFrame, processed: pd.DataFrame) -> list[str]:
@@ -195,10 +228,13 @@ def generate_commentary(features: pd.DataFrame, processed: pd.DataFrame) -> list
     statuses = team_status(processed)
     eliminated = sorted(t for t, s in statuses.items() if s == "ELIMINATED")
     active_count = sum(1 for s in statuses.values() if s == "ACTIVE")
+    playoff_total = sum(1 for s in statuses.values() if s in ("ACTIVE", "ELIMINATED"))
     if eliminated:
         notes.append(f"Eliminated from playoffs: **{', '.join(eliminated)}**.")
-    if active_count and statuses:
-        notes.append(f"**{active_count}** of {len(statuses)} teams still active.")
+    if active_count and playoff_total:
+        notes.append(
+            f"**{active_count}** of {playoff_total} playoff teams still active."
+        )
 
     return notes
 
@@ -243,8 +279,13 @@ st.sidebar.metric("Date range", date_range_str)
 _statuses_sidebar = team_status(processed)
 if _statuses_sidebar:
     _active = sum(1 for s in _statuses_sidebar.values() if s == "ACTIVE")
-    _total = len(_statuses_sidebar)
-    st.sidebar.metric("Teams still active", f"{_active} / {_total}")
+    # Denominator is playoff teams only (ACTIVE + ELIMINATED); DNP teams
+    # never qualified and shouldn't count against the "still alive" ratio.
+    _playoff_total = sum(
+        1 for s in _statuses_sidebar.values() if s in ("ACTIVE", "ELIMINATED")
+    )
+    if _playoff_total:
+        st.sidebar.metric("Playoff teams still active", f"{_active} / {_playoff_total}")
 
 _ts = latest_data_timestamp()
 if _ts is not None:
@@ -284,11 +325,16 @@ if view == "Leaderboard":
 
     snap = latest_snapshot(features)
     _statuses = team_status(processed)
-    snap = snap.assign(
-        status=snap["team_abbreviation"].map(
-            lambda t: "OUT" if _statuses.get(t) == "ELIMINATED" else "ACTIVE"
-        )
-    )
+
+    def _display_status(team: str) -> str:
+        s = _statuses.get(team)
+        if s == "ELIMINATED":
+            return "OUT"
+        if s == "DNP":
+            return "DNP"
+        return "ACTIVE"
+
+    snap = snap.assign(status=snap["team_abbreviation"].map(_display_status))
     snap_display = snap.rename(
         columns={
             "team_abbreviation": "team",
@@ -375,8 +421,10 @@ elif view == "Team detail":
 
     # --- Series history banner ---
     _series = team_series_history(processed, team)
-    if not _series.empty:
-        _team_status = team_status(processed).get(team, "ACTIVE")
+    _team_status = team_status(processed).get(team)
+    if _team_status == "DNP":
+        st.info(f"{team}: did not play in the 2025–26 playoffs.")
+    elif not _series.empty:
         if _team_status == "ELIMINATED":
             st.error(f"{team}: **ELIMINATED** from the 2025–26 playoffs.")
         else:

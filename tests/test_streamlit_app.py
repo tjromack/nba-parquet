@@ -191,6 +191,86 @@ def test_series_summary_and_team_status_against_synthetic_data():
     )
 
 
+def test_team_status_filters_to_playoffs_only():
+    """Bulk-loading the regular season exposed this: the elimination
+    logic must scope to playoff games. A 4-game playoff series produces
+    one team with 4 losses; the regular season never does (teams play
+    each other 2-4 times max). Without scoping, RS-only teams (e.g.
+    teams that didn't make the playoffs at all) silently slide through
+    as 'ACTIVE'.
+
+    Expected three states:
+      ACTIVE       - in playoffs, not yet eliminated
+      ELIMINATED   - in playoffs, lost a 4-game series
+      DNP          - did not play in playoffs (RS-only)
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("streamlit_app", APP_FILE)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        import pytest
+
+        pytest.skip("streamlit_app already loaded in this process")
+
+    import pandas as pd
+
+    rows = []
+    # OKC 4-0 PHX in the playoffs - PHX eliminated, OKC active
+    for w in range(4):
+        rows.append(
+            {
+                "team_abbreviation": "OKC",
+                "opponent_abbreviation": "PHX",
+                "game_id": f"p{w}",
+                "season_type": "Playoffs",
+                "win": True,
+            }
+        )
+        rows.append(
+            {
+                "team_abbreviation": "PHX",
+                "opponent_abbreviation": "OKC",
+                "game_id": f"p{w}",
+                "season_type": "Playoffs",
+                "win": False,
+            }
+        )
+    # SAS plays DEN twice in the regular season, sweep. Without
+    # the playoff filter, SAS would be flagged ACTIVE (no 4-loss
+    # series) when it should be DNP (didn't make the playoffs).
+    for w in range(2):
+        rows.append(
+            {
+                "team_abbreviation": "SAS",
+                "opponent_abbreviation": "DEN",
+                "game_id": f"r{w}",
+                "season_type": "Regular Season",
+                "win": True,
+            }
+        )
+        rows.append(
+            {
+                "team_abbreviation": "DEN",
+                "opponent_abbreviation": "SAS",
+                "game_id": f"r{w}",
+                "season_type": "Regular Season",
+                "win": False,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    statuses = module.team_status(df)
+    assert statuses["OKC"] == "ACTIVE"
+    assert statuses["PHX"] == "ELIMINATED"
+    # The headline bug: RS-only teams must be DNP, not ACTIVE.
+    assert statuses["SAS"] == "DNP"
+    assert statuses["DEN"] == "DNP"
+
+
 def test_streamlit_app_imports_streamlit_and_pandas():
     source = APP_FILE.read_text(encoding="utf-8")
     tree = ast.parse(source)
