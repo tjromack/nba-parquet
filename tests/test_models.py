@@ -215,16 +215,36 @@ def test_game_is_dropped_when_one_team_has_no_prior_history():
     assert "G5" not in frame["game_id"].tolist()
 
 
-def test_bad_orientation_raises_value_error():
-    """Two is_home=True rows for one game is corrupt orientation —
-    the builder must fail loudly, not silently emit garbage."""
+def test_non_standard_orientation_games_are_dropped(caplog):
+    """Games without exactly one home + one away row get filtered out.
+
+    Two real-world causes: neutral-site games (NBA Cup knockout in Vegas
+    encodes both teams as "@" -> two is_home=False rows) and duplicated
+    rows from a re-ingest. The builder must drop these silently with a
+    warning, not raise — a handful of unusable games shouldn't sink an
+    otherwise-clean 1,200-game training frame.
+    """
     features, processed = _synthetic_features_and_processed()
-    # Corrupt G3: flip AWAY's is_home to True so the game has two home rows.
+    # Corrupt G3: flip AWAY's is_home to True so the game has two home rows
+    # (and zero away rows). Same effect as a neutral-site duplicate.
     mask = (processed["game_id"] == "G3") & (processed["team_abbreviation"] == "AWAY")
     processed.loc[mask, "is_home"] = True
 
-    with pytest.raises(ValueError, match="exactly one home row"):
-        build_training_frame(features, processed)
+    with caplog.at_level("WARNING"):
+        frame = build_training_frame(features, processed)
+    assert "G3" not in frame["game_id"].tolist()
+    assert any("non-standard home/away" in r.message for r in caplog.records)
+
+
+def test_neutral_site_game_both_away_is_dropped():
+    """Real-world neutral-site case: both rows parse to is_home=False."""
+    features, processed = _synthetic_features_and_processed()
+    # Force G2 to look like an NBA Cup Vegas game: both teams away.
+    mask = processed["game_id"] == "G2"
+    processed.loc[mask, "is_home"] = False
+
+    frame = build_training_frame(features, processed)
+    assert "G2" not in frame["game_id"].tolist()
 
 
 # --------------------------------------------------------------------------

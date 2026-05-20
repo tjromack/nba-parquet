@@ -20,7 +20,11 @@ decoupled from Spark makes the leakage test fast and JVM-free.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # Rolling feature columns produced by etl.features.build_rolling_features.
 # These are the only columns lagged and fed to the model.
@@ -121,6 +125,16 @@ def build_training_frame(
     feat = feat.dropna(subset=[f"lag_{_HISTORY_SENTINEL}"]).reset_index(drop=True)
 
     # --- 2. Per-game orientation + label from the processed layer ---
+    # Drop any game_id that doesn't resolve to exactly one home + one away
+    # row. Two real causes in practice:
+    #   * Neutral-site games (NBA Cup knockout in Vegas, NBA Global Games)
+    #     where nba_api encodes both teams' MATCHUP with "@", so both rows
+    #     parse to is_home=False. These genuinely have no home team and
+    #     cannot be a row in a home-team-win frame.
+    #   * Genuinely corrupt rows (duplicate team-game from a re-ingest, etc).
+    # Both get silently dropped with a warning — the model layer should be
+    # defensive, not brittle, so a few unusable games don't sink an
+    # otherwise-clean 1,200-game training frame.
     home = processed.loc[
         processed["is_home"] == True,  # noqa: E712  (pandas mask, not `is`)
         ["game_id", "team_abbreviation", "win"],
@@ -129,11 +143,21 @@ def build_training_frame(
         processed["is_home"] == False,  # noqa: E712
         ["game_id", "team_abbreviation"],
     ]
-    if not home["game_id"].is_unique or not away["game_id"].is_unique:
-        raise ValueError(
-            "Data quality: each game_id must have exactly one home row and "
-            "one away row in the processed layer."
+    valid_home = set(home["game_id"][~home["game_id"].duplicated(keep=False)])
+    valid_away = set(away["game_id"][~away["game_id"].duplicated(keep=False)])
+    usable = valid_home & valid_away
+    all_games = set(processed["game_id"].unique())
+    dropped = all_games - usable
+    if dropped:
+        logger.warning(
+            "build_training_frame: dropped %d/%d games with non-standard "
+            "home/away orientation (neutral-site or corrupt). Sample: %s",
+            len(dropped),
+            len(all_games),
+            sorted(dropped)[:5],
         )
+    home = home[home["game_id"].isin(usable)]
+    away = away[away["game_id"].isin(usable)]
     home = home.rename(columns={"team_abbreviation": "home_team", "win": "label"})
     away = away.rename(columns={"team_abbreviation": "away_team"})
 
