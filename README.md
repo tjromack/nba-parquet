@@ -148,6 +148,8 @@ The features layer was built to feed a winner-prediction model. It's built (`mod
 | Logistic regression | 0.563 |
 | HistGradientBoosting | 0.438 |
 
+> Snapshot taken at N=62 games (the last `python -m models.train` run). The live dashboard recomputes walk-forward against the current `out/` data on every render, so as `catch_up.ps1` adds new playoff games the dashboard's "out-of-fold accuracy" metric will drift slightly from the table above. That's the system being a live system — not a discrepancy.
+
 This is the *expected* outcome of doing ML correctly on insufficient data, not a defect. Walk-forward training folds are ~15–30 games; with that little data a learned model overfits and a robust heuristic ("whoever's been shooting better") wins. The honest move is to **state this and not tune until the model "wins"** — torturing a 48-game test set into a good number would just be overfitting that any reviewer who knows the field would read as leakage.
 
 What this demonstrates is the *methodology*, which is identical at any data scale: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), honest baselines named up front, deterministic + MLflow-tracked runs, and the discipline to ship a negative result truthfully. The credible path to meaningful numbers is the regular-season bulk-load (~1,200+ games vs. 62) — a data-volume change that requires **zero model-code changes**, which is itself the point.
