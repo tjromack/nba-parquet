@@ -293,6 +293,100 @@ Weak candidates (skip these):
 - Routine refactors with no design content
 - Anything the commit message already covers in full
 
+### Discovered nba_api endpoint soft-deprecation via a 32-MB bulk-load failure
+
+- **When**: 2026-05-23 (Phase A advanced ingest, first real-data run)
+- **What happened**: Phase A built the advanced box-score ingest layer
+  using `nba_api.stats.endpoints.BoxScoreAdvancedV2`. All tests passed
+  against mocked V2-shaped fixtures. First real bulk-load: the
+  traditional pass succeeded for all 1,230 games in ~28 min, then the
+  advanced pass blew up on the very first call with
+  `KeyError: 'resultSet'` deep inside `nba_api`'s parser. A single
+  isolated call to V2 reproduced the failure — ruling out rate
+  limiting. Direct `requests.get()` to the V2 URL returned HTTP 200
+  with body literally `{}` — stats.nba.com had soft-deprecated the V2
+  advanced endpoint, accepting requests but returning empty payloads.
+  Swapped to `BoxScoreAdvancedV3` (newer columns, camelCase instead
+  of UPPER_SNAKE) with an explicit `_V3_ADVANCED_COLUMN_MAP`. Second
+  bulk run: 32,179 rows in ~28 min, clean.
+- **What it demonstrates**: External-API contracts drift silently —
+  the soft-deprecation pattern (200 + empty body, no 404) is
+  specifically designed to look like "your data is just missing"
+  rather than "you're using a dead endpoint." The triage was three
+  diagnostic steps: (1) verify it isn't rate limiting via isolated
+  retry, (2) inspect the actual response shape with `requests`
+  directly, (3) check whether a newer endpoint version exists. The
+  explicit column-mapping dict is the defensive payoff — V3 ships new
+  fields (`pacePer40`, `possessions`) that we intentionally drop
+  rather than silently include, so the schema stays auditable.
+- **Where to look**: [etl/ingest.py:357-410](../etl/ingest.py) for
+  `_fetch_advanced_box_score` + `_V3_ADVANCED_COLUMN_MAP`; commit
+  `cb20c13` for the swap diff and detailed reasoning.
+
+### `get_spark()` bootstraps PYSPARK_PYTHON + HADOOP_HOME defensively
+
+- **When**: 2026-05-23 (Phase A advanced ingest, second real-data run)
+- **What happened**: The advanced bulk-load was kicked off via a
+  PowerShell one-liner that imported `etl.transform.get_spark` and
+  `etl.ingest.ingest_advanced_box_scores_bulk` directly — bypassing
+  the `scripts/bulk_load_season.py` wrapper that had been quietly
+  setting `PYSPARK_PYTHON`, `PYSPARK_DRIVER_PYTHON`, and `HADOOP_HOME`
+  at module top. ~12 minutes into the run, Spark tried to spawn its
+  Python workers via `python3` (Linux convention) and every task
+  failed with `CreateProcess error=2, The system cannot find the file
+  specified`. Burned the API budget; lost the in-memory data because
+  the write step never executed. Fixed by making `get_spark()` itself
+  call a `_bootstrap_pyspark_env()` helper the first time it's
+  invoked, setting both Python env vars to `sys.executable` and
+  pointing `HADOOP_HOME` at the vendored `.hadoop/` directory. The
+  wrapper scripts still set these at module top — belt-and-suspenders;
+  `get_spark()` is now the safety net for direct callers.
+- **What it demonstrates**: A "convenience entrypoint" (here:
+  `get_spark()`) should be self-sufficient, not rely on the existence
+  of a particular wrapper script to set environment up. The original
+  design had the wrapper scripts do the setup, which worked fine until
+  someone (me, in this case) reached past the wrapper and hit the bare
+  function. Lifting the platform-specific incantations *into* the
+  factory function — guarded by `os.environ.setdefault` so wrappers
+  that already set them don't get clobbered — eliminates the
+  "wrapper-required" footgun without changing the wrappers' behavior.
+  Also a real cost: the failure cost ~25 minutes of wall-clock time
+  and forced a re-run, which is exactly the kind of incident worth
+  preventing with 6 lines of defensive code.
+- **Where to look**: [etl/transform.py:14-44](../etl/transform.py) for
+  `_bootstrap_pyspark_env`; [scripts/bulk_load_advanced_only.py](../scripts/bulk_load_advanced_only.py)
+  for the dedicated re-runnable script that came out of this incident;
+  commit `512d757` for the diff.
+
+### Phase B feature richness → +1.3pp logreg accuracy, HGB unchanged — reported honestly
+
+- **When**: 2026-05-24 (Phase B retrain after rebuild_from_raw)
+- **What happened**: Phase B blended `BoxScoreAdvancedV3` aggregates
+  (minutes-weighted team ORtg / DRtg / NetRtg / Pace) into processed
+  and added matching rolling features. Retrained on N=1,284 games. The
+  story is mixed and reported as such: logreg accuracy moved 0.607 →
+  **0.620** (+1.3pp), closing the gap to the strongest baseline from
+  -2.8pp to **-1.6pp**. HGB barely moved (+0.2pp, noise). Log loss got
+  slightly *worse* for both models (logreg 0.654 → 0.662, HGB 1.019 →
+  1.070) — the model is making more confident picks whose confidence
+  isn't always justified. A genuine small regression hidden inside an
+  accuracy improvement.
+- **What it demonstrates**: Adding domain-informed features ≠
+  automatic improvement. The linear model picked up signal from the
+  advanced metrics that wasn't in the rolling traditional stats; the
+  gradient booster did not, almost certainly because rolling pts /
+  eFG% / TS% are already near-monotonic transforms of ORtg/DRtg, so
+  the trees couldn't carve out additional decision regions. The
+  accuracy lift came packaged with a log-loss regression — the kind of
+  trade-off that gets buried in real ML projects when only the
+  favorable metric is reported. Calibration (Platt / isotonic) is the
+  honest v1.3.x follow-up. Reporting both the win and the small loss
+  is the methodology this whole phase has been about.
+- **Where to look**: README's "Phase 4b — honest results" table for
+  the three-snapshot comparison; commit `d86a13e` for the Phase B
+  pipeline change; `TODO.md` "Phase B follow-up" for the calibration
+  plan.
+
 ## Template
 
 ```markdown

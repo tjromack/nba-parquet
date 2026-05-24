@@ -289,6 +289,57 @@ the leakage test against a synthetic sequence FIRST (red), then
 de-risks the entire phase — everything downstream is only trustworthy if
 the training frame is leak-free.
 
+### Phase B — advanced box-score ingest + model retrain (shipped v1.3.0)
+
+Added `BoxScoreAdvancedV3` ingest as a side-by-side raw zone
+(`raw/nba/box_scores_advanced/`), joined the minutes-weighted team
+aggregates (ORtg, DRtg, NetRtg, Pace) into the processed layer, added
+matching rolling features, and retrained.
+
+**Honest result:** logreg accuracy 0.607 → **0.620** (+1.3pp), closing
+the gap to the strongest baseline from -2.8pp to -1.6pp. HGB barely
+moved (+0.2pp, noise) — the rolling traditional features are already a
+near-monotonic transform of ORtg/DRtg so the trees couldn't find new
+decision regions. Reported in README and dashboard banner.
+
+**One small regression worth flagging, not hiding:** log loss got
+slightly worse for both models (logreg 0.654 → 0.662, hgb 1.019 →
+1.070) even though logreg's accuracy improved. The model is making
+more confident picks whose confidence isn't always justified — a
+calibration story. Brier score barely moved (0.231 → 0.232) which is
+consistent. **Calibration (Platt scaling / isotonic) is the natural
+v1.3.x follow-up** — would fix the log-loss regression while keeping
+the accuracy lift.
+
+**Side benefits that came out of Phase A/B debugging:**
+- nba_api endpoint deprecation discovered: `BoxScoreAdvancedV2`
+  returns HTTP 200 with empty `{}` body (soft-deprecated by
+  stats.nba.com). Patched to V3 with explicit column mapping. Real
+  engineering moment captured in ENGINEERING_NOTES.md.
+- `get_spark()` bootstraps `PYSPARK_PYTHON` and `HADOOP_HOME`
+  defensively now, so notebook / one-liner invocations work on Windows
+  without manual env-var dance.
+
+### Daily DAG: wire advanced ingest into the catch-up path (Phase B follow-up)
+
+Currently the bulk-load script ingests both traditional and advanced,
+but the daily DAG and `scripts/run_local.py` only ingest traditional.
+That means new partitions written after the bulk-load have NULL
+advanced columns until someone re-runs `rebuild_from_raw.py`.
+
+For full coverage:
+1. Add `ingest_advanced_box_scores` (daily, single-date) to the DAG as
+   a sibling to `ingest_raw`. Two API calls per game instead of one,
+   but the per-day game count is small (~5-15 games) so the extra time
+   is <30 seconds.
+2. Update `_transform_and_aggregate` to also read the advanced raw
+   partition for the run date and pass to `aggregate_team_advanced` +
+   `join_team_advanced`.
+3. Same for `scripts/run_local.py`.
+
+Not blocking — the model retrain works fine off the bulk-loaded
+history; this just keeps the daily catch-up coherent with the bulk.
+
 ### Regular-season bulk-load (Phase 4b post-script) — session A shipped
 
 The infrastructure is in place: `etl.ingest.ingest_box_scores_bulk` walks

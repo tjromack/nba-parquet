@@ -36,7 +36,11 @@ compute trailing 10-game features, with conditional aggregation for home/away
 split. Writes are partitioned by `(season, game_date)` with
 `partitionOverwriteMode=dynamic` so daily runs only touch the day's partition.
 The Airflow stack runs on Docker Compose with `LocalExecutor` and a Postgres
-metadata DB — no Celery or Redis.
+metadata DB — no Celery or Redis. A side-by-side advanced raw zone
+(`raw/nba/box_scores_advanced/`, sourced from `BoxScoreAdvancedV3`) is joined
+on `(game_id, team_id)` to give the processed layer team-level offensive /
+defensive / net ratings plus pace; rolling versions of those flow into the
+features layer for the prediction model.
 
 **Layman:** Every day, the pipeline:
 
@@ -196,17 +200,26 @@ observable failures. That part transfers to any domain.
 > with a five-task Airflow DAG moving data between them on a daily schedule.
 > The transform step uses Spark window functions partitioned by team and
 > ordered by game date to compute trailing 10-game averages of true-shooting
-> percentage, assist-to-turnover ratio, win rate, and a home / away split.
-> Writes use dynamic partition overwrite so daily backfills are idempotent.
-> The whole stack runs locally in Docker Compose with LocalExecutor — no
-> Celery, no Redis — and the test suite has 25 unit tests covering schema
-> math, partitioning, and DAG-import hygiene. CI on every push.
+> percentage, assist-to-turnover ratio, win rate, home / away split, and —
+> from a side-by-side advanced raw zone — offensive rating, defensive rating,
+> and pace. Writes use dynamic partition overwrite so daily backfills are
+> idempotent. The whole stack runs locally in Docker Compose with
+> LocalExecutor — no Celery, no Redis — and the test suite has 69 unit tests
+> covering schema math, partitioning, model leakage guards, and DAG-import
+> hygiene. CI on every push.
+>
+> Downstream of the features layer is a leak-free walk-forward winner-
+> prediction model with logistic regression and HistGradientBoosting, both
+> evaluated against three named baselines on a 993-game out-of-fold test
+> set. Logreg lands ~1.6pp behind the strongest baseline; that gap is
+> reported plainly in the README rather than tuned away. The honest result
+> is the artifact.
 >
 > The interesting part of this project isn't the NBA-specific code, which is
 > small. It's the operational infrastructure around the data — schema
-> enforcement, retry-safe writes, observable failures. The same architecture
-> would repoint at NFL play-by-play or stock market data with about a day of
-> work."
+> enforcement, retry-safe writes, observable failures, honest ML evaluation.
+> The same architecture would repoint at NFL play-by-play or stock market
+> data with about a day of work."
 
 ### 30-minute technical deep-dive
 
