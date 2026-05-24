@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
@@ -12,7 +14,40 @@ S3A_PACKAGES = (
 )
 
 
+def _bootstrap_pyspark_env() -> None:
+    """Set ``PYSPARK_PYTHON`` / ``PYSPARK_DRIVER_PYTHON`` and
+    ``HADOOP_HOME`` defensively so ``get_spark()`` works regardless of
+    how it's invoked.
+
+    Without this, calling ``get_spark()`` directly (e.g. from a Python
+    one-liner or notebook) hits two Windows-specific failures that the
+    ``scripts/`` wrappers were silently papering over:
+
+    1. Spark workers try to spawn ``python3``, which doesn't exist on
+       Windows venvs — every task fails with
+       ``CreateProcess error=2``.
+    2. Spark falls back to the system Hadoop install (which isn't
+       present), emitting ``Did not find winutils.exe`` and refusing
+       to write parquet.
+
+    Both are fixed by exporting ``sys.executable`` as the worker Python
+    and pointing ``HADOOP_HOME`` at the vendored ``.hadoop/`` directory.
+    The wrapper scripts still do the same thing — this is a belt-and-
+    suspenders fix so direct ``get_spark()`` callers don't have to know.
+    """
+    os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+    os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+    repo_root = Path(__file__).resolve().parents[1]
+    hadoop_dir = repo_root / ".hadoop"
+    if hadoop_dir.is_dir() and not os.environ.get("HADOOP_HOME"):
+        os.environ["HADOOP_HOME"] = str(hadoop_dir)
+        os.environ["PATH"] = (
+            str(hadoop_dir / "bin") + os.pathsep + os.environ.get("PATH", "")
+        )
+
+
 def get_spark(app_name: str = "nba-etl") -> SparkSession:
+    _bootstrap_pyspark_env()
     builder = (
         SparkSession.builder.appName(app_name).master(
             os.environ.get("SPARK_MASTER", "local[*]")
