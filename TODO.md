@@ -307,9 +307,17 @@ slightly worse for both models (logreg 0.654 → 0.662, hgb 1.019 →
 1.070) even though logreg's accuracy improved. The model is making
 more confident picks whose confidence isn't always justified — a
 calibration story. Brier score barely moved (0.231 → 0.232) which is
-consistent. **Calibration (Platt scaling / isotonic) is the natural
-v1.3.x follow-up** — would fix the log-loss regression while keeping
-the accuracy lift.
+consistent. ~~Calibration (Platt scaling / isotonic) is the natural
+v1.3.x follow-up~~ **Resolved in v1.3.1 — but not by calibration code.**
+The v1.3.0 bulk-load was `NBA_SEASON_TYPE="Regular Season"` only;
+playoff advanced columns were median-imputed by the sklearn pipeline.
+Filling the playoff advanced data (`bulk_load_advanced_only.py` with
+`NBA_SEASON_TYPE=Playoffs`) closed the gap to the strongest baseline
+to **0.2pp** and improved both log loss (0.662 → 0.644) and Brier
+(0.232 → 0.226) without changing any model code. The "regression" was
+median-imputed playoff features producing over-confident picks; real
+data fixed the calibration organically. Methodology lesson captured
+in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
 
 **Side benefits that came out of Phase A/B debugging:**
 - nba_api endpoint deprecation discovered: `BoxScoreAdvancedV2`

@@ -611,15 +611,18 @@ elif view == "Predictions":
         "**Honest framing.** Trained on the full 2025–26 regular season "
         "plus playoffs (~1,284 games, leak-free walk-forward CV) using "
         "both traditional and advanced rolling features (ORtg, DRtg, "
-        "Pace from BoxScoreAdvancedV3, joined per-team-per-game). The "
-        "model still doesn't beat the strongest baseline but the gap has "
-        'closed: vanilla logistic regression at ~0.62 vs. "pick the '
-        'team with the better trailing win pct" at ~0.64 — about half '
-        "the gap of the pre-advanced-features version (~0.61 vs ~0.63). "
-        "Reported plainly rather than tuned away: a 993-game out-of-fold "
-        "test set is large enough that p-hacking a 1–2pp lift would be "
-        "trivial and exactly the kind of soft leakage a reviewer would "
-        "flag. Treat the picks as illustrative of *correct methodology* "
+        "Pace from BoxScoreAdvancedV3, joined per-team-per-game across "
+        "the full season). On the 993-game out-of-fold test set, vanilla "
+        "logistic regression sits at ~0.63 vs. the strongest baseline "
+        '("pick the team with the better trailing win pct") at ~0.64 — '
+        "effectively tied within noise. Reported plainly rather than "
+        "tuned away: a 993-game OOF test set is large enough that "
+        "p-hacking a 1–2pp lift would be trivial and exactly the kind "
+        "of soft leakage a reviewer would flag. The headline isn't "
+        '"model beats baseline" — it\'s that strict walk-forward CV '
+        "against three honest baselines puts a vanilla logreg at "
+        "baseline parity with documented data + feature progression. "
+        "Treat the picks as illustrative of *correct methodology* "
         "(leak-free features, fair baselines, deterministic, MLflow-"
         "tracked) — not as a betting edge."
     )
@@ -697,11 +700,11 @@ elif view == "Predictions":
         st.metric(
             "Out-of-fold model accuracy",
             f"{acc:.1%}",
-            help="On the full 2025–26 RS+playoffs frame with traditional "
-            "+ advanced rolling features (Phase B), the model trails "
-            "the strongest baseline (better trailing win pct, ~0.64) "
-            "by ~1.6pp — about half the pre-advanced gap. The honest "
-            "result, reported rather than tuned away.",
+            help="On the full 2025–26 RS+playoffs frame with full "
+            "advanced-feature coverage (v1.3.1), the model sits within "
+            "0.2pp of the strongest baseline (better trailing win pct, "
+            "~0.64) — effectively tied on a 993-game OOF test set. "
+            "The honest result, reported rather than tuned away.",
         )
         show = scored.sort_values("game_date", ascending=False).head(20).copy()
         show["game_date"] = show["game_date"].dt.strftime("%Y-%m-%d")

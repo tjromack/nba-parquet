@@ -387,6 +387,46 @@ Weak candidates (skip these):
   pipeline change; `TODO.md` "Phase B follow-up" for the calibration
   plan.
 
+### "Calibration regression" turned out to be a data-completeness gap — diagnosed by reading the data, not the model
+
+- **When**: 2026-05-24 (v1.3.1, immediately post-v1.3.0)
+- **What happened**: v1.3.0 shipped with a documented quirk — accuracy
+  improved (+1.3pp logreg) but log loss got slightly worse (0.654 →
+  0.662). I'd labeled this "a calibration story" in the README and
+  filed Platt/isotonic scaling as the natural v1.3.x follow-up. Then,
+  during a casual diagnostic walk of the features layer
+  (`spark.read.parquet('out/features/...').tail(10)`), the user
+  noticed that `rolling_ortg`, `rolling_drtg`, and `rolling_pace`
+  were **NaN for every single one of the most recent playoff games**
+  even though `rolling_ts_pct` had numbers. Root cause: the v1.3.0
+  bulk-load used `NBA_SEASON_TYPE="Regular Season"` — the advanced
+  zone got every RS game but **zero playoff games**. ~150 of 2,610
+  processed rows had NULL advanced columns; the sklearn imputer
+  silently median-filled them at train time so nothing crashed.
+  Re-ran `bulk_load_advanced_only.py` with `NBA_SEASON_TYPE=Playoffs`
+  (~5 min, ~75 games), rebuilt features, retrained: logreg accuracy
+  jumped another **+1.4pp** (0.620 → 0.634) AND log loss **improved**
+  (0.662 → 0.644). The "calibration" regression vanished without a
+  single line of calibration code.
+- **What it demonstrates**: Methodology debugging requires
+  distinguishing *the model is mis-calibrated* from *the model is
+  mis-fed*. The symptom (worse log loss alongside better accuracy)
+  looked exactly like a calibration problem, and "add Platt scaling"
+  is the textbook answer. But the right fix was upstream of the
+  model entirely: real ORtg/DRtg/Pace for playoff games replaced
+  median-imputed values, and the model's confidence aligned with
+  reality. Also a real argument for **reading the data, not just the
+  metrics** — the diagnostic that broke this open was four pandas
+  operations against the features layer, not anything model-specific.
+  And a real cost for hasty diagnosis: the v1.3.0 README confidently
+  said "calibration follow-up" when the actual fix had nothing to do
+  with calibration; the v1.3.1 release notes correct that
+  attribution rather than quietly drop it.
+- **Where to look**: `TODO.md` "Phase B follow-ups" for the
+  before/after framing; commit producing v1.3.1 for the docs update;
+  README Phase 4b table for the four-snapshot progression that makes
+  the lift attributable to data completeness, not model tuning.
+
 ## Template
 
 ```markdown

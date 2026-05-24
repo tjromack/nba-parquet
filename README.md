@@ -140,48 +140,40 @@ NYK has the first full 10-game window (8-2 stretch at .630 TS%). OKC's still per
 
 The features layer was built to feed a winner-prediction model. It's built (`models/`), evaluated with leak-free walk-forward CV, and tracked in MLflow. **Every iteration's results are reported here rather than hidden.**
 
-**Post-Phase-B snapshot** (added BoxScoreAdvancedV3 ingest → rolling ORtg / DRtg / NetRtg / Pace alongside the traditional rolling features; N=1,284 games, 993 OOF test rows):
+**Current snapshot — v1.3.1, full advanced-feature coverage** (N=1,284 games, 993 OOF test rows):
 
 | Predictor | Walk-forward accuracy |
 |---|---|
 | Baseline: better trailing win % | **0.636** |
-| **Logistic regression** | **0.620** |
-| HistGradientBoosting | 0.575 |
+| **Logistic regression** | **0.634** |
+| HistGradientBoosting | 0.585 |
 | Baseline: better trailing TS% | 0.567 |
 | Baseline: always pick home | 0.553 |
 
-Earlier post-bulk-load snapshot — traditional rolling features only (N=1,280 games, 989 OOF test rows):
+Logreg lands **within 0.2pp of the strongest baseline** — effectively a tie on a 993-game OOF test set. Same leak-free walk-forward CV, same three named baselines, no model-tuning; the gap closed entirely through data-and-feature progress.
 
-| Predictor | Walk-forward accuracy |
-|---|---|
-| Baseline: better trailing win % | **0.635** |
-| Logistic regression | 0.607 |
-| HistGradientBoosting | 0.573 |
-| Baseline: better trailing TS% | 0.565 |
-| Baseline: always pick home | 0.553 |
+#### The four-snapshot progression
 
-Original playoff-only snapshot (N=62 games), retained for the data-volume comparison:
+| Stage | Setup | N games | logreg acc | best baseline | Gap |
+|---|---|---:|---:|---:|---:|
+| v1.1.0 | Playoff-only, traditional rolling | 62 | 0.563 | 0.667 (TS%) | -10.4pp |
+| v1.2.0 | Full RS + playoffs, traditional rolling | 1,280 | 0.607 | 0.635 (win%) | -2.8pp |
+| v1.3.0 | + RS-advanced (ORtg/DRtg/Pace), playoff advanced imputed | 1,284 | 0.620 | 0.636 (win%) | -1.6pp |
+| **v1.3.1** | **+ Playoff advanced filled in (full coverage)** | **1,284** | **0.634** | **0.636 (win%)** | **-0.2pp** |
 
-| Predictor | Walk-forward accuracy (48 test games) |
-|---|---|
-| Baseline: better trailing TS% | **0.667** |
-| Baseline: better trailing win % | 0.583 |
-| Logistic regression | 0.563 |
-| HistGradientBoosting | 0.438 |
+Three distinct lifts, each with a defensible mechanism:
 
-**Two data-volume / feature-richness lifts, two real findings:**
+1. **Volume effect** (v1.1.0 → v1.2.0, +4.4pp): more games = stable rolling windows = the model and baselines both move into a realistic accuracy band. The best baseline also shifted from "better trailing TS%" (a playoff-flavored signal) to "better trailing win %" (a regular-season signal) — exactly what basketball intuition predicts.
 
-1. **Volume effect (62 → 1,280 games, traditional features):** logreg moved from 0.563 → 0.607 (+4.4pp), HGB from 0.438 → 0.573 (+13.5pp from the random-floor range it sat in on the thin playoff sample). Best baseline shifted from "better trailing TS%" (a playoff-flavored signal) to "better trailing win %" (a regular-season signal) — exactly what basketball domain intuition predicts.
+2. **Feature-richness effect** (v1.2.0 → v1.3.0, +1.3pp): adding rolling ORtg / DRtg / Pace from BoxScoreAdvancedV3 gave the linear model signal that wasn't captured by rolling pts / eFG% / TS%. HGB barely moved because rolling traditional stats are already a near-monotonic transform of ORtg/DRtg, so trees can't carve out new decision regions.
 
-2. **Feature-richness effect (Phase B: + rolling ORtg / DRtg / Pace):** logreg moved from 0.607 → **0.620** (+1.3pp) and closed the gap to the strongest baseline from -2.8pp to **-1.6pp**. HGB barely moved (+0.2pp, noise) — the rolling traditional features (eFG%, TS%, pts) are already a near-monotonic transform of ORtg/DRtg, so the trees couldn't carve additional decision regions out of the new columns. An honest result that domain-informed features ≠ automatic improvement; the linear model picked up real signal, the gradient booster did not.
+3. **Data-completeness effect** (v1.3.0 → v1.3.1, +1.4pp): the v1.3.0 bulk-load was `NBA_SEASON_TYPE="Regular Season"` only — playoff games had real traditional rolling stats but **imputed** advanced columns (the sklearn pipeline's median imputer filled them). Filling the playoff advanced ingest swapped median-imputed values for real per-team-per-game ORtg/DRtg/Pace. Log loss and Brier *both improved alongside accuracy* — see the lesson note below.
 
-> Log loss for both models got *slightly worse* in Phase B even though logreg's accuracy improved (0.654 → 0.662 for logreg). That means the model is making more confident picks whose confidence isn't always justified — a calibration story, not an accuracy story. Probability calibration (Platt scaling / isotonic) is a credible v1.3.x follow-up. Flagging this rather than hiding it because the lower log loss in v1.2.0 is genuinely a small regression — the kind of trade-off that gets buried in real ML projects.
+> **What I called "a calibration regression" in v1.3.0 was actually a data-completeness problem.** The log-loss regression I flagged in the v1.3.0 release notes (0.654 → 0.662) is now -0.018 *better* than v1.2.0 (0.644), with no calibration code added. Platt scaling / isotonic wasn't needed — the model's confidence was being miscalibrated by *median-imputed advanced features* on playoff games, not by the model itself. When real data replaced the imputed values, calibration improved organically. Real methodology lesson: distinguish "the model is mis-calibrated" from "the model is mis-fed." Captured in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
 
 > The live dashboard recomputes walk-forward against the current `out/` data on every render, so as the daily DAG adds new games the OOF accuracy in the **Predictions** view will drift from this table. That's the system being a live system.
 
-Even at full-season scale with the richer feature set, the result is *deliberately* not "model beats every baseline." Tuning until it did would be the dishonest move — a 993-game OOF test set is enough that p-hacking a 1-2pp lift is trivially achievable and would be exactly the kind of soft leakage that any reviewer with ML experience would call out. The honest report is: with leak-free features, fair baselines, walk-forward evaluation, and a vanilla model, the strongest baseline ("whichever team has the better rolling win pct") is *still* the strongest predictor — but a vanilla logreg has closed two-thirds of the original gap by progressing data volume and feature richness, with each lift documented and reproducible.
-
-What this whole phase demonstrates is the *methodology*, which is identical at any data scale: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), honest baselines named up front, deterministic + MLflow-tracked runs, defensible data-quality handling (5 neutral-site games dropped from 1,305 with a logged warning, not a silent skew), and the discipline to ship results truthfully whether or not they're the headline-friendly ones.
+Even at parity with the strongest baseline, the headline isn't "model wins." The headline is *the methodology arc*: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), three named baselines all reported on the same OOF test rows, deterministic + MLflow-tracked runs, defensible data-quality handling (5 neutral-site games dropped from 1,305 with a logged warning), and the discipline to report each iteration's numbers truthfully — including a small log-loss regression I then traced to its actual root cause rather than papering over with a tuning hack.
 
 Reproduce + inspect from a clean clone:
 
