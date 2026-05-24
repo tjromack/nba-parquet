@@ -355,10 +355,51 @@ def ingest_box_scores_bulk(
 
 
 def _fetch_advanced_box_score(game_id: str) -> pd.DataFrame:
-    from nba_api.stats.endpoints import BoxScoreAdvancedV2
+    """Fetch advanced box-score player stats via the V3 endpoint.
 
-    box = BoxScoreAdvancedV2(game_id=game_id, timeout=NBA_API_TIMEOUT_SECONDS)
+    V2 (``BoxScoreAdvancedV2``) was soft-deprecated by stats.nba.com:
+    requests succeed with HTTP 200 but the response body is an empty
+    ``{}``, which ``nba_api`` then fails to parse (``KeyError:
+    'resultSet'``). V3 is the supported replacement and returns the
+    same advanced metrics plus a few new ones (``pacePer40``,
+    ``possessions``) under camelCase column names — the normalizer
+    explicitly maps those to our snake_case schema.
+    """
+    from nba_api.stats.endpoints import BoxScoreAdvancedV3
+
+    box = BoxScoreAdvancedV3(game_id=game_id, timeout=NBA_API_TIMEOUT_SECONDS)
     return box.player_stats.get_data_frame()
+
+
+# V3 camelCase column -> our schema snake_case column. Explicit so the
+# mapping is auditable and renames in either direction fail loudly
+# rather than silently dropping data.
+_V3_ADVANCED_COLUMN_MAP = {
+    "teamId": "team_id",
+    "teamTricode": "team_abbreviation",
+    "teamCity": "team_city",
+    "personId": "player_id",
+    "minutes": "min",
+    "estimatedOffensiveRating": "e_off_rating",
+    "offensiveRating": "off_rating",
+    "estimatedDefensiveRating": "e_def_rating",
+    "defensiveRating": "def_rating",
+    "estimatedNetRating": "e_net_rating",
+    "netRating": "net_rating",
+    "assistPercentage": "ast_pct",
+    "assistToTurnover": "ast_tov",
+    "assistRatio": "ast_ratio",
+    "offensiveReboundPercentage": "oreb_pct",
+    "defensiveReboundPercentage": "dreb_pct",
+    "reboundPercentage": "reb_pct",
+    "effectiveFieldGoalPercentage": "efg_pct",
+    "trueShootingPercentage": "ts_pct",
+    "usagePercentage": "usg_pct",
+    "estimatedUsagePercentage": "e_usg_pct",
+    "pace": "pace",
+    "estimatedPace": "e_pace",
+    "PIE": "pie",
+}
 
 
 def _advanced_rows_to_spark(df: pd.DataFrame) -> list[dict]:
@@ -401,11 +442,31 @@ def _normalize_advanced_player_rows(
     season: str,
     season_type: str,
 ) -> pd.DataFrame:
-    """Lowercase + tag the advanced payload to match the schema."""
+    """Map a BoxScoreAdvancedV3 payload onto the schema.
+
+    V3 column names are camelCase (``offensiveRating``, ``personId``,
+    ``teamTricode``), which doesn't match our snake_case schema — the
+    naive ``columns.lower()`` we use for the traditional endpoint would
+    leave ``offensiverating`` as a non-matching column. Explicit
+    ``_V3_ADVANCED_COLUMN_MAP`` instead, plus a constructed
+    ``player_name`` from ``firstName`` + ``familyName`` (V3 splits
+    name components where V2 had a single ``PLAYER_NAME``).
+    Columns not in our schema (``possessions``, ``pacePer40``,
+    ``comment``, etc.) are dropped on purpose — Phase A keeps the
+    schema stable; net-new fields can come in a later phase.
+    """
     if raw.empty:
         return pd.DataFrame(columns=_RAW_ADVANCED_COLUMNS)
 
-    df = raw.rename(columns={c: c.lower() for c in raw.columns})
+    df = raw.rename(columns=_V3_ADVANCED_COLUMN_MAP)
+
+    if "firstName" in df.columns and "familyName" in df.columns:
+        df["player_name"] = (
+            df["firstName"].fillna("").astype(str).str.strip()
+            + " "
+            + df["familyName"].fillna("").astype(str).str.strip()
+        ).str.strip()
+        df.loc[df["player_name"] == "", "player_name"] = None
 
     season_year = _season_start_year(season)
     df["game_id"] = game_id
