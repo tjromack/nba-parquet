@@ -37,6 +37,15 @@ ROLLING_FEATURE_COLS: list[str] = [
     "rolling_win_pct",
     "rolling_pts_home",
     "rolling_pts_away",
+    # Phase B advanced rolling features. Null when the underlying
+    # processed rows don't have advanced metrics (older partitions
+    # ingested before Phase A, or daily-only ingest paths). The
+    # leakage firewall is unchanged: each value is the team's lagged
+    # rolling average entering the game, never the current game.
+    "rolling_ortg",
+    "rolling_drtg",
+    "rolling_net_rtg",
+    "rolling_pace",
 ]
 
 # "Has at least one prior game" sentinel. games_in_window is always
@@ -110,6 +119,15 @@ def build_training_frame(
     feat = features.sort_values(
         ["team_abbreviation", "game_date", "game_id"]
     ).reset_index(drop=True)
+    # Pre-Phase-B features frames don't carry the four advanced rolling
+    # columns. Add them as NaN so ROLLING_FEATURE_COLS stays a fixed
+    # contract for the model layer; the imputer pipeline-step that every
+    # model is built on top of fills the NaNs at fit time, identical to
+    # how it handles legitimate NaNs in any other rolling column on
+    # short-history games.
+    for col in ROLLING_FEATURE_COLS:
+        if col not in feat.columns:
+            feat[col] = pd.NA
     lagged = feat.groupby("team_abbreviation", sort=False)[ROLLING_FEATURE_COLS].shift(
         1
     )

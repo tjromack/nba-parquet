@@ -96,6 +96,12 @@ FEATURE_SCHEMA = StructType(
         StructField("rolling_win_pct", DoubleType(), nullable=True),
         StructField("rolling_pts_home", DoubleType(), nullable=True),
         StructField("rolling_pts_away", DoubleType(), nullable=True),
+        # Advanced rolling features (Phase B). Nullable so games
+        # without advanced raw data ingested yet still pass schema.
+        StructField("rolling_ortg", DoubleType(), nullable=True),
+        StructField("rolling_drtg", DoubleType(), nullable=True),
+        StructField("rolling_net_rtg", DoubleType(), nullable=True),
+        StructField("rolling_pace", DoubleType(), nullable=True),
     ]
 )
 
@@ -123,5 +129,13 @@ PROCESSED_SCHEMA = StructType(
         StructField("top_scorer", StringType(), nullable=True),
         StructField("top_rebounder", StringType(), nullable=True),
         StructField("top_playmaker", StringType(), nullable=True),
+        # Advanced metrics (Phase B). Nullable so partitions ingested
+        # before the advanced layer existed (or daily catch-ups that
+        # only run the traditional path) still validate against this
+        # schema and just carry NULLs for these columns.
+        StructField("off_rating", DoubleType(), nullable=True),
+        StructField("def_rating", DoubleType(), nullable=True),
+        StructField("net_rating", DoubleType(), nullable=True),
+        StructField("pace", DoubleType(), nullable=True),
     ]
 )

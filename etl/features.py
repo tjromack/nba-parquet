@@ -63,6 +63,24 @@ def build_rolling_features(df: DataFrame, window: int = DEFAULT_WINDOW) -> DataF
         .withColumn("rolling_pts_away", F.avg(pts_away_only).over(team_window))
     )
 
+    # Phase B: advanced rolling features. Source columns are nullable
+    # (joined from the advanced layer; some history doesn't have it),
+    # so we guard each with isin(col_names) to keep the rolling builder
+    # callable on processed frames produced before Phase B landed.
+    available = set(df.columns)
+    for src_col, out_col in [
+        ("off_rating", "rolling_ortg"),
+        ("def_rating", "rolling_drtg"),
+        ("net_rating", "rolling_net_rtg"),
+        ("pace", "rolling_pace"),
+    ]:
+        if src_col in available:
+            enriched = enriched.withColumn(
+                out_col, F.avg(F.col(src_col)).over(team_window)
+            )
+        else:
+            enriched = enriched.withColumn(out_col, F.lit(None).cast("double"))
+
     return enriched.select(
         "season",
         "game_date",
@@ -77,4 +95,8 @@ def build_rolling_features(df: DataFrame, window: int = DEFAULT_WINDOW) -> DataF
         "rolling_win_pct",
         "rolling_pts_home",
         "rolling_pts_away",
+        "rolling_ortg",
+        "rolling_drtg",
+        "rolling_net_rtg",
+        "rolling_pace",
     )

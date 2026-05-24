@@ -203,3 +203,78 @@ def join_top_players(team_game: DataFrame, raw: DataFrame) -> DataFrame:
         .join(top_rebounder, on=join_keys, how="left")
         .join(top_playmaker, on=join_keys, how="left")
     )
+
+
+def aggregate_team_advanced(adv_raw: DataFrame) -> DataFrame:
+    """Roll per-player advanced rows up to one row per (game_id, team_id).
+
+    nba_api's BoxScoreAdvancedV3 returns per-player advanced metrics —
+    a player's individual on-court rating, not the team's. The team's
+    overall rating in a game is approximated here as the **minutes-
+    weighted average** of the players who actually saw the floor.
+    Pace is a team-level metric repeated per player, so a simple max
+    picks the canonical value while ignoring any null rows from
+    inactive players. Players with zero/null minutes (DNPs) are
+    dropped before weighting so they don't drag the average.
+
+    Returns columns: ``game_id``, ``team_id``, ``off_rating``,
+    ``def_rating``, ``net_rating``, ``pace``. All nullable doubles —
+    if a (game, team) has no usable rows the join downstream produces
+    NULLs (honest representation of "no advanced data here").
+    """
+    # "MM:SS" -> double minutes. Players with "" / null / "0:00" get 0
+    # and are filtered out before the weighting math.
+    minutes_d = F.regexp_extract(F.col("min"), r"^(\d+)", 1).cast("double")
+    played = adv_raw.withColumn("_min_num", minutes_d).filter(
+        F.col("_min_num").isNotNull() & (F.col("_min_num") > 0)
+    )
+
+    weighted = played.withColumn(
+        "_ortg_w", F.col("off_rating") * F.col("_min_num")
+    ).withColumn("_drtg_w", F.col("def_rating") * F.col("_min_num"))
+
+    grouped = weighted.groupBy("game_id", "team_id").agg(
+        F.sum("_min_num").alias("_total_min"),
+        F.sum("_ortg_w").alias("_ortg_w_sum"),
+        F.sum("_drtg_w").alias("_drtg_w_sum"),
+        F.max("pace").alias("pace"),
+    )
+
+    return grouped.select(
+        F.col("game_id"),
+        F.col("team_id"),
+        _safe_div(F.col("_ortg_w_sum"), F.col("_total_min")).alias("off_rating"),
+        _safe_div(F.col("_drtg_w_sum"), F.col("_total_min")).alias("def_rating"),
+        (
+            _safe_div(F.col("_ortg_w_sum"), F.col("_total_min"))
+            - _safe_div(F.col("_drtg_w_sum"), F.col("_total_min"))
+        ).alias("net_rating"),
+        F.col("pace"),
+    )
+
+
+def join_team_advanced(team_game: DataFrame, team_advanced: DataFrame) -> DataFrame:
+    """Left-join the advanced team aggregates onto the traditional one.
+
+    Left join is deliberate: games whose advanced raw partition hasn't
+    been ingested yet (daily catch-ups that only run the traditional
+    path, or pre-Phase-A history) come through with NULL advanced
+    columns rather than disappearing. ``rolling_*`` features on the
+    downstream side use ``avg(... ignoring nulls)`` so a partial-data
+    rolling window degrades gracefully instead of erroring.
+    """
+    return team_game.join(team_advanced, on=["game_id", "team_id"], how="left")
+
+
+def with_null_advanced_columns(df: DataFrame) -> DataFrame:
+    """Add the four Phase B advanced columns as NULL doubles.
+
+    Used by callers that don't have an advanced raw zone to join (the
+    daily catch-up path, pre-Phase-A backfills, tests that don't need
+    advanced data). Keeps the processed-frame schema stable so the
+    rest of the pipeline reads/writes a single column shape regardless
+    of upstream provenance.
+    """
+    for col in ("off_rating", "def_rating", "net_rating", "pace"):
+        df = df.withColumn(col, F.lit(None).cast("double"))
+    return df

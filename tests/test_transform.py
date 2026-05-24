@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import math
 
+from pyspark.sql import functions as F
+
 from etl.schema import PROCESSED_SCHEMA, RAW_BOX_SCORE_SCHEMA
-from etl.transform import aggregate_team_game, get_top_player, join_top_players
+from etl.transform import (
+    aggregate_team_game,
+    get_top_player,
+    join_top_players,
+    with_null_advanced_columns,
+)
 
 
 def _row(df, **filters):
@@ -19,7 +26,7 @@ def _row(df, **filters):
 
 def test_aggregate_team_game_schema_matches_processed(raw_df):
     team_game = aggregate_team_game(raw_df)
-    enriched = join_top_players(team_game, raw_df)
+    enriched = with_null_advanced_columns(join_top_players(team_game, raw_df))
 
     expected = {f.name for f in PROCESSED_SCHEMA.fields}
     actual = set(enriched.columns)
@@ -36,7 +43,7 @@ def test_aggregate_on_empty_raw_yields_empty_not_error(spark):
     assert empty_raw.rdd.isEmpty()
 
     team_game = aggregate_team_game(empty_raw)
-    enriched = join_top_players(team_game, empty_raw)
+    enriched = with_null_advanced_columns(join_top_players(team_game, empty_raw))
 
     # No crash, zero rows, schema still intact.
     assert enriched.count() == 0
@@ -149,3 +156,170 @@ def test_get_top_player_filters_null_names(spark):
     result = get_top_player(data, "pts", ["game_id", "team_id"], "top_scorer").collect()
     assert len(result) == 1
     assert result[0]["top_scorer"] == "Real Player"
+
+
+# --------------------------------------------------------------------------
+# Phase B: advanced metrics aggregation
+# --------------------------------------------------------------------------
+
+
+def _advanced_raw_fixture(spark):
+    """Two-player advanced rows for one team-game.
+
+    Hand-computable: 30 min @ 120 ORtg + 18 min @ 100 ORtg =
+        (30*120 + 18*100) / 48 = (3600 + 1800) / 48 = 112.5
+    Inactive 0-min row exists but must NOT drag the average.
+    Pace is repeated per row (team-level); max() picks it cleanly.
+    """
+    from etl.schema import RAW_BOX_SCORE_ADVANCED_SCHEMA
+
+    return spark.createDataFrame(
+        [
+            {
+                "game_id": "g_adv_1",
+                "game_date": __import__("datetime").date(2025, 11, 1),
+                "season": 2025,
+                "season_type": "Regular Season",
+                "team_id": 100,
+                "team_abbreviation": "TST",
+                "team_city": None,
+                "player_id": 1,
+                "player_name": "Active Starter",
+                "min": "30:00",
+                "e_off_rating": None,
+                "off_rating": 120.0,
+                "e_def_rating": None,
+                "def_rating": 105.0,
+                "e_net_rating": None,
+                "net_rating": 15.0,
+                "ast_pct": None,
+                "ast_tov": None,
+                "ast_ratio": None,
+                "oreb_pct": None,
+                "dreb_pct": None,
+                "reb_pct": None,
+                "tm_tov_pct": None,
+                "efg_pct": None,
+                "ts_pct": None,
+                "usg_pct": None,
+                "e_usg_pct": None,
+                "pace": 99.5,
+                "e_pace": None,
+                "pie": None,
+            },
+            {
+                "game_id": "g_adv_1",
+                "game_date": __import__("datetime").date(2025, 11, 1),
+                "season": 2025,
+                "season_type": "Regular Season",
+                "team_id": 100,
+                "team_abbreviation": "TST",
+                "team_city": None,
+                "player_id": 2,
+                "player_name": "Active Bench",
+                "min": "18:00",
+                "e_off_rating": None,
+                "off_rating": 100.0,
+                "e_def_rating": None,
+                "def_rating": 115.0,
+                "e_net_rating": None,
+                "net_rating": -15.0,
+                "ast_pct": None,
+                "ast_tov": None,
+                "ast_ratio": None,
+                "oreb_pct": None,
+                "dreb_pct": None,
+                "reb_pct": None,
+                "tm_tov_pct": None,
+                "efg_pct": None,
+                "ts_pct": None,
+                "usg_pct": None,
+                "e_usg_pct": None,
+                "pace": 99.5,
+                "e_pace": None,
+                "pie": None,
+            },
+            {
+                "game_id": "g_adv_1",
+                "game_date": __import__("datetime").date(2025, 11, 1),
+                "season": 2025,
+                "season_type": "Regular Season",
+                "team_id": 100,
+                "team_abbreviation": "TST",
+                "team_city": None,
+                "player_id": 3,
+                "player_name": "DNP — should be dropped",
+                "min": "0:00",
+                "e_off_rating": None,
+                "off_rating": 999.0,  # would torch the average if not filtered
+                "e_def_rating": None,
+                "def_rating": 999.0,
+                "e_net_rating": None,
+                "net_rating": 0.0,
+                "ast_pct": None,
+                "ast_tov": None,
+                "ast_ratio": None,
+                "oreb_pct": None,
+                "dreb_pct": None,
+                "reb_pct": None,
+                "tm_tov_pct": None,
+                "efg_pct": None,
+                "ts_pct": None,
+                "usg_pct": None,
+                "e_usg_pct": None,
+                "pace": 99.5,
+                "e_pace": None,
+                "pie": None,
+            },
+        ],
+        schema=RAW_BOX_SCORE_ADVANCED_SCHEMA,
+    )
+
+
+def test_aggregate_team_advanced_minutes_weighted_average(spark):
+    """ORtg/DRtg/NetRtg roll up minutes-weighted; DNP rows are excluded."""
+    from etl.transform import aggregate_team_advanced
+
+    raw = _advanced_raw_fixture(spark)
+    team_adv = aggregate_team_advanced(raw).collect()
+    assert len(team_adv) == 1
+    row = team_adv[0]
+    assert row["game_id"] == "g_adv_1"
+    assert row["team_id"] == 100
+    # (30*120 + 18*100) / 48 = 112.5 — NOT 406.33 (which would mean DNP wasn't filtered)
+    assert math.isclose(row["off_rating"], 112.5, rel_tol=1e-9)
+    # (30*105 + 18*115) / 48 = 108.75
+    assert math.isclose(row["def_rating"], 108.75, rel_tol=1e-9)
+    # ORtg - DRtg = 112.5 - 108.75 = 3.75
+    assert math.isclose(row["net_rating"], 3.75, rel_tol=1e-9)
+    # pace is team-level repeated; max() picks 99.5
+    assert math.isclose(row["pace"], 99.5, rel_tol=1e-9)
+
+
+def test_join_team_advanced_left_join_keeps_unmatched_games(spark, raw_df):
+    """Games without advanced data must survive the join as NULL,
+    not get filtered out — the daily DAG only ingests traditional."""
+    from etl.transform import aggregate_team_advanced, join_team_advanced
+
+    team_game = aggregate_team_game(raw_df)
+    n_before = team_game.count()
+    # Build advanced for a different (game_id, team_id) that doesn't
+    # match anything in raw_df — left join still keeps all team_game rows.
+    adv = aggregate_team_advanced(_advanced_raw_fixture(spark))
+    joined = join_team_advanced(team_game, adv)
+    assert joined.count() == n_before
+    # The unmatched team_game rows have NULL advanced columns.
+    nulls = joined.filter(F.col("off_rating").isNull()).count()
+    assert nulls == n_before
+
+
+def test_with_null_advanced_columns_adds_four_doubles(spark, raw_df):
+    """The convenience helper used by the daily DAG / pre-Phase-A
+    backfill path adds exactly the four advanced columns as NULL doubles."""
+    team_game = aggregate_team_game(raw_df)
+    out = with_null_advanced_columns(team_game)
+    added = set(out.columns) - set(team_game.columns)
+    assert added == {"off_rating", "def_rating", "net_rating", "pace"}
+    row = out.first()
+    for col in added:
+        assert row[col] is None

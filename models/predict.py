@@ -61,8 +61,20 @@ def predict_matchup(model, home_row: pd.Series, away_row: pd.Series) -> dict:
     the predicted winner, the home win probability, and the feature
     vector that drove it (for display).
     """
-    x = {f"home_{c}": home_row[c] for c in ROLLING_FEATURE_COLS}
-    x.update({f"away_{c}": away_row[c] for c in ROLLING_FEATURE_COLS})
+    # Tolerate rolling cols that the team's feature row doesn't carry
+    # (e.g. pre-Phase-B features data has no rolling_ortg). The pipeline's
+    # imputer fills NaN at predict time, identical to how it handles
+    # legit missing-history NaNs at fit time.
+    x = {
+        f"home_{c}": home_row[c] if c in home_row.index else float("nan")
+        for c in ROLLING_FEATURE_COLS
+    }
+    x.update(
+        {
+            f"away_{c}": away_row[c] if c in away_row.index else float("nan")
+            for c in ROLLING_FEATURE_COLS
+        }
+    )
     frame = pd.DataFrame([x])[feature_columns()]
     home_win_prob = float(model.predict_proba(frame)[:, 1][0])
     return {
