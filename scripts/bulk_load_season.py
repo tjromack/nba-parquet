@@ -9,8 +9,10 @@ aggregate / features write path the daily DAG uses. Output lives under
 identical to the daily path so the two interleave cleanly under
 ``raw/nba/box_scores/``.
 
-Wall-clock expectation: ~12-20 minutes for a full regular season
-(~1230 games) at the 0.6s sleep cadence. Resumable in the sense that
+Wall-clock expectation: ~25-40 minutes for a full regular season
+(~1230 games) at the 0.6s sleep cadence — the traditional and advanced
+endpoints each get their own call per game, so total API calls roughly
+double vs. the traditional-only path. Resumable in the sense that
 re-running overwrites only the partitions it touches (dynamic partition
 overwrite for raw + processed; features is a season-level overwrite).
 
@@ -45,7 +47,10 @@ os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
 os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 from etl.features import build_rolling_features  # noqa: E402
-from etl.ingest import ingest_box_scores_bulk  # noqa: E402
+from etl.ingest import (  # noqa: E402
+    ingest_advanced_box_scores_bulk,
+    ingest_box_scores_bulk,
+)
 from etl.paths import is_local_mode  # noqa: E402
 from etl.schema import RAW_BOX_SCORE_SCHEMA  # noqa: E402
 from etl.transform import aggregate_team_game, get_spark, join_top_players  # noqa: E402
@@ -96,6 +101,25 @@ def main() -> int:
         )
         ingest_elapsed = time.time() - started
         logger.info("Raw bulk-ingest done in %.1fs at %s", ingest_elapsed, raw_path)
+
+        # Phase A advanced layer: same orchestration cadence, separate
+        # zone. Doubles the API call count (one BoxScoreAdvancedV2 per
+        # game in addition to BoxScoreTraditionalV2) so wall-clock for
+        # a full RS roughly doubles (~25-40 min total). The downstream
+        # transform/features still reads the traditional layer for now
+        # — Phase B will join the advanced metrics in.
+        adv_started = time.time()
+        adv_path = ingest_advanced_box_scores_bulk(
+            season=season,
+            season_type=season_type,
+            s3_bucket=s3_bucket,
+            spark=spark,
+        )
+        logger.info(
+            "Advanced bulk-ingest done in %.1fs at %s",
+            time.time() - adv_started,
+            adv_path,
+        )
 
         raw_df = spark.read.schema(RAW_BOX_SCORE_SCHEMA).parquet(raw_path)
         raw_count = raw_df.count()
