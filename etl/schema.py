@@ -7,7 +7,34 @@ from pyspark.sql.types import (
     StringType,
     StructField,
     StructType,
+    TimestampType,
 )
+
+RAW_ODDS_SCHEMA = StructType(
+    [
+        # Identity + partition keys. game_id is the_odds_api's hash id
+        # (NOT nba_api's GAME_ID); the two systems use different
+        # identifiers. Joining odds to nba_api games happens via
+        # (game_date, home_team, away_team) — handled in models/market.py.
+        StructField("game_id", StringType(), nullable=False),
+        StructField("game_date", DateType(), nullable=False),  # ET game date
+        StructField("commence_time", TimestampType(), nullable=False),  # UTC tipoff
+        StructField("home_team", StringType(), nullable=False),  # full team name
+        StructField("away_team", StringType(), nullable=False),
+        # Market identity. One row per (game, sportsbook, market, outcome)
+        # so the long format makes downstream joins/aggs straightforward.
+        StructField("sportsbook", StringType(), nullable=False),  # bookmaker key
+        StructField("market_type", StringType(), nullable=False),  # h2h|spreads|totals
+        StructField("outcome_name", StringType(), nullable=False),
+        # Prices. American odds (negative for favorites, positive for dogs).
+        # point is NULL for h2h, the spread or total line otherwise.
+        StructField("price", IntegerType(), nullable=True),
+        StructField("point", DoubleType(), nullable=True),
+        # Provenance for time-series analysis + CLV tracking.
+        StructField("fetched_at", TimestampType(), nullable=False),
+    ]
+)
+
 
 RAW_BOX_SCORE_ADVANCED_SCHEMA = StructType(
     [
