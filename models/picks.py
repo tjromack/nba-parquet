@@ -192,10 +192,14 @@ def generate_pick(
     if anchor_h2h.empty:
         anchor_any = odds_df[odds_df["sportsbook"] == anchor_sportsbook]
         if anchor_any.empty:
+            available = sorted(odds_df["sportsbook"].unique().tolist())
             raise ValueError(
                 f"No anchor book {anchor_sportsbook!r} in odds_df. "
                 "De-vigging requires sharp pricing (Pinnacle is the "
-                "default); refusing to fall back to a softer book."
+                "default); refusing to fall back to a softer book. "
+                f"Books actually present in odds_df: {available}. "
+                "If Pinnacle is genuinely unavailable for this market, "
+                "verify ODDS_API_REGIONS includes 'eu' in etl/odds.py."
             )
         raise ValueError(
             f"No h2h market for {anchor_sportsbook!r}; cannot price moneyline."

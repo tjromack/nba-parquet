@@ -38,7 +38,15 @@ from etl.schema import RAW_ODDS_SCHEMA
 logger = logging.getLogger(__name__)
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds/"
-ODDS_API_REGIONS = "us"
+# Regions: ``us`` for the books a US bettor could actually use
+# (DraftKings, FanDuel, BetMGM, Caesars, ...), ``eu`` to pull Pinnacle
+# as the sharp-anchor reference for de-vigging. Pinnacle doesn't
+# legally operate in most US states, so it's absent from a pure
+# ``us`` response — but its lines are the lowest-hold market in the
+# world and the canonical sharp anchor. Quota cost is 6 units per
+# call (3 markets x 2 regions); fine for the Finals demo (~120 units
+# total across the series, well inside the free-tier 500/month).
+ODDS_API_REGIONS = "us,eu"
 ODDS_API_MARKETS = "h2h,spreads,totals"
 ODDS_API_TIMEOUT_SECONDS = 15
 
