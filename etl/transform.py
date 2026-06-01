@@ -56,6 +56,13 @@ def get_spark(app_name: str = "nba-etl") -> SparkSession:
         # a daily run touching one (season, game_date) partition must not
         # wipe sibling partitions for other days in the same prefix.
         .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
+        # Force UTC session timezone so naive datetimes (which we pass
+        # in as UTC) round-trip through parquet without shifting by
+        # whatever JVM-local timezone the JVM picked up. The Finals
+        # Game 1 pick's first JSON had commence_time off by 5 hours
+        # because the JVM was interpreting our UTC datetimes as EST
+        # before writing them to parquet.
+        .config("spark.sql.session.timeZone", "UTC")
     )
 
     if not is_local_mode():
