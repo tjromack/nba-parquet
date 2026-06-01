@@ -93,10 +93,18 @@ def _normalize_odds(raw_games: list[dict], fetched_at: datetime) -> pd.DataFrame
         # commence_time is ISO UTC ("2026-06-04T00:30:00Z"). Pandas
         # parses the Z suffix as UTC; tz_convert to US/Eastern gives
         # the calendar date NBA scheduling uses.
-        commence_utc = pd.Timestamp(game["commence_time"])
+        #
+        # IMPORTANT: keep the timestamp tz-aware (UTC) all the way
+        # through to Spark. The earlier .tz_localize(None) path
+        # produced a naive datetime that Spark then interpreted via
+        # session timezone — which silently shifted timestamps by
+        # +5 hours on the user's machine even after we explicitly
+        # set spark.sql.session.timeZone=UTC. Passing tz-aware
+        # datetimes forces Spark to store as UTC unambiguously,
+        # regardless of session config or JVM default.
+        commence_utc = pd.Timestamp(game["commence_time"]).tz_convert("UTC")
         game_date = commence_utc.tz_convert("US/Eastern").date()
-        commence_naive_utc = commence_utc.tz_convert("UTC").tz_localize(None)
-        commence_py = commence_naive_utc.to_pydatetime()
+        commence_py = commence_utc.to_pydatetime()
 
         for book in game.get("bookmakers", []):
             sportsbook = book["key"]
@@ -115,7 +123,11 @@ def _normalize_odds(raw_games: list[dict], fetched_at: datetime) -> pd.DataFrame
                             "outcome_name": outcome["name"],
                             "price": outcome.get("price"),
                             "point": outcome.get("point"),
-                            "fetched_at": fetched_at.replace(tzinfo=None),
+                            # Keep fetched_at tz-aware for the same reason
+                            # commence_time is tz-aware: avoid Spark
+                            # session-timezone interpretation of naive
+                            # datetimes shifting our UTC values.
+                            "fetched_at": fetched_at,
                         }
                     )
 
@@ -129,10 +141,13 @@ def _to_spark_rows(df: pd.DataFrame) -> list[dict]:
 
     Same pattern as ``etl.ingest._to_spark_rows``: convert NaN to
     None, coerce ints/doubles explicitly so pandas type widening
-    doesn't trip Spark's nullability checks. Timestamps need
-    ``.to_pydatetime()`` because pandas re-coerces stored datetimes
-    to ``pd.Timestamp`` in the DataFrame, and Spark's TimestampType
-    rejects Timestamp objects directly.
+    doesn't trip Spark's nullability checks.
+
+    Timestamps are kept **timezone-aware (UTC)** so Spark stores
+    them unambiguously as UTC regardless of session timezone or
+    JVM default. The earlier naive-datetime approach was silently
+    shifted by +5 hours on the user's machine even with
+    spark.sql.session.timeZone=UTC explicitly set.
     """
     if df.empty:
         return []
@@ -148,6 +163,11 @@ def _to_spark_rows(df: pd.DataFrame) -> list[dict]:
                 if pd.isna(value):
                     clean[col] = None
                 else:
+                    # Preserve tz-awareness; ensure UTC.
+                    if value.tzinfo is None:
+                        value = value.tz_localize("UTC")
+                    else:
+                        value = value.tz_convert("UTC")
                     clean[col] = value.to_pydatetime()
                 continue
             if isinstance(value, float) and pd.isna(value):

@@ -303,6 +303,45 @@ def test_ingest_odds_requires_bucket_or_local_mode(spark, monkeypatch):
         odds.ingest_odds(spark, s3_bucket="")
 
 
+def test_commence_time_round_trips_through_parquet_as_utc(
+    spark, monkeypatch, tmp_path: Path
+):
+    """Regression: a UTC commence_time written to parquet and read
+    back must NOT be shifted. Earlier code passed naive datetimes
+    to Spark, which interpreted them via JVM-default session
+    timezone and silently shifted by +5 hours even when
+    spark.sql.session.timeZone=UTC was set.
+
+    Pyspark Row access returns timestamps in local system timezone
+    regardless of session config, so we check via pandas
+    ``read_parquet`` (which preserves tz-aware UTC datetime64) —
+    matching how production reads the file.
+    """
+    import pandas as pd
+
+    monkeypatch.setenv("ODDS_API_KEY", "test-key-not-real")
+    with patch.object(odds, "_fetch_odds") as mock_fetch:
+        mock_fetch.return_value = _fake_odds_response()
+        target_dir = tmp_path / "odds_tz_check"
+        _redirect_parquet_writes(monkeypatch, target_dir)
+        odds.ingest_odds(spark, s3_bucket="test-bucket")
+
+    df = pd.read_parquet(target_dir)
+    game_a = df[df["game_id"] == "game_a_hash"].iloc[0]
+    ct = pd.Timestamp(game_a["commence_time"])
+    # _fake_odds_response has Game A at "2026-06-04T00:30:00Z" — that's
+    # 00:30 UTC. After write+read, the instant must equal 00:30 UTC.
+    if ct.tzinfo is not None:
+        ct = ct.tz_convert("UTC")
+    else:
+        ct = ct.tz_localize("UTC")
+    assert ct.year == 2026
+    assert ct.month == 6
+    assert ct.day == 4
+    assert ct.hour == 0, f"expected UTC hour=0, got {ct.hour}"
+    assert ct.minute == 30, f"expected UTC minute=30, got {ct.minute}"
+
+
 def test_ingest_odds_empty_response_still_writes_schema(
     spark, monkeypatch, tmp_path: Path
 ):
