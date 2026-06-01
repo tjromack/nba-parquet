@@ -31,6 +31,7 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
@@ -39,27 +40,27 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from models.baselines import baseline_accuracies
+from models.calibration import calibration_report
 from models.dataset import feature_columns
 from models.evaluation import walk_forward_splits
 
 SEED = 42
 DEFAULT_N_SPLITS = 4
 PRIMARY_MODEL = "hgb"  # the artifact that gets persisted (spec: HistGBM)
+CALIBRATION_INTERNAL_CV = 5  # for CalibratedClassifierCV inside each walk-forward fold
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRACKING_URI = (REPO_ROOT / "mlruns").as_uri()
 DEFAULT_ARTIFACT_DIR = REPO_ROOT / "models" / "artifacts"
 
 
-def make_model(model_name: str, seed: int = SEED) -> Pipeline:
-    """Fresh sklearn Pipeline for ``model_name`` ('logreg' | 'hgb').
+def _make_base_pipeline(model_name: str, seed: int = SEED) -> Pipeline:
+    """The uncalibrated base pipeline for ``model_name``.
 
     Both pipelines start with the SAME median imputer so the
     baseline-vs-model comparison is fair (logreg cannot ingest NaN;
     HistGBM can — forcing both through identical imputation keeps the
-    delta meaningful). A new instance every call: the walk-forward loop
-    refits from scratch per fold so no fitted state survives across
-    folds (the preprocessing-leak firewall).
+    delta meaningful).
     """
     if model_name == "logreg":
         return Pipeline(
@@ -81,10 +82,7 @@ def make_model(model_name: str, seed: int = SEED) -> Pipeline:
                         # ~15-30 games, so with the default the booster
                         # cannot make a single split and just predicts the
                         # majority class. 5 lets it actually learn on small
-                        # folds. This is the documented small-data
-                        # adaptation the spec anticipated — defensible
-                        # because the honest evaluation is the point, not
-                        # squeezing a thin playoff sample.
+                        # folds. The documented small-data adaptation.
                         min_samples_leaf=5,
                         random_state=seed,
                     ),
@@ -92,6 +90,51 @@ def make_model(model_name: str, seed: int = SEED) -> Pipeline:
             ]
         )
     raise ValueError(f"unknown model_name {model_name!r} (use 'logreg' or 'hgb')")
+
+
+def make_model(
+    model_name: str,
+    seed: int = SEED,
+    calibrate: bool = True,
+) -> CalibratedClassifierCV | Pipeline:
+    """Calibrated wrapper around a fresh base pipeline.
+
+    The Game 1 Finals pick exposed that an un-calibrated model can be
+    confidently wrong at the extremes (predicted 0.79 home win on a
+    matchup the sharp market priced at 0.62). Isotonic calibration
+    via ``CalibratedClassifierCV`` fits a non-parametric monotonic
+    function on top of the base estimator's outputs so the stated
+    probabilities match empirical frequencies within each bucket.
+
+    The internal CV (default 5-fold) happens **inside each walk-
+    forward training set only** — no leakage to the test fold,
+    because CalibratedClassifierCV's CV operates on whatever data
+    you pass to .fit(). Each walk-forward fold:
+
+      1. Receives its training rows (e.g., games 0..N).
+      2. CalibratedClassifierCV internally 5-fold-CVs that training
+         set: fits a base pipeline on 4/5 train, predicts on 1/5
+         calibration, then fits the isotonic calibrator on those
+         (calibration_proba, calibration_label) pairs.
+      3. Wraps the calibrator + a final base pipeline fitted on the
+         full training set; predicts on the walk-forward test rows.
+
+    The walk-forward test rows are never seen by the base estimator
+    OR the calibrator during fitting. The leakage firewall is intact.
+
+    ``calibrate=False`` returns the raw pipeline — used internally by
+    the calibration diagnostic to compare calibrated-vs-uncalibrated
+    behavior and by tests that want to assert the wrapper actually
+    changes outputs.
+    """
+    base = _make_base_pipeline(model_name, seed)
+    if not calibrate:
+        return base
+    return CalibratedClassifierCV(
+        base,
+        method="isotonic",
+        cv=CALIBRATION_INTERNAL_CV,
+    )
 
 
 def _round(value: float, places: int = 6) -> float:
@@ -129,6 +172,7 @@ def evaluate_walk_forward(
 
     oof = ordered.loc[test_index]
     baselines = baseline_accuracies(oof)
+    cal = calibration_report(y_true, y_proba, n_bins=10)
 
     return {
         "model": model_name,
@@ -137,6 +181,13 @@ def evaluate_walk_forward(
         "accuracy": _round(accuracy_score(y_true, y_pred)),
         "log_loss": _round(log_loss(y_true, y_proba, labels=[0, 1])),
         "brier": _round(brier_score_loss(y_true, y_proba)),
+        # Calibration diagnostics: ECE = weighted avg gap between
+        # predicted and actual win rate across 10 buckets; MCE = worst
+        # single bucket. Lower is better. A well-calibrated model has
+        # ECE under ~0.05; over 0.10 means the stated probabilities
+        # are unreliable for EV math.
+        "ece": _round(cal["ece"]),
+        "mce": _round(cal["mce"]),
         "baseline_always_home": _round(baselines["always_home"]),
         "baseline_better_win_pct": _round(baselines["better_win_pct"]),
         "baseline_better_ts_pct": _round(baselines["better_ts_pct"]),
@@ -224,9 +275,13 @@ def evaluate_all(
         "logreg_accuracy": logreg["accuracy"],
         "logreg_log_loss": logreg["log_loss"],
         "logreg_brier": logreg["brier"],
+        "logreg_ece": logreg["ece"],
+        "logreg_mce": logreg["mce"],
         "hgb_accuracy": hgb["accuracy"],
         "hgb_log_loss": hgb["log_loss"],
         "hgb_brier": hgb["brier"],
+        "hgb_ece": hgb["ece"],
+        "hgb_mce": hgb["mce"],
         "baseline_always_home": hgb["baseline_always_home"],
         "baseline_better_win_pct": hgb["baseline_better_win_pct"],
         "baseline_better_ts_pct": hgb["baseline_better_ts_pct"],
@@ -292,6 +347,35 @@ def train_and_log(
     return summary
 
 
+def _reliability_diagram_text(
+    frame: pd.DataFrame,
+    model_name: str,
+    n_splits: int = DEFAULT_N_SPLITS,
+    seed: int = SEED,
+) -> str:
+    """Format an ASCII reliability diagram for the given model's OOF
+    predictions. Used by the train CLI summary so reviewers can see
+    *where* calibration is good and where it isn't, not just the
+    headline ECE.
+    """
+    from models.calibration import format_reliability_table
+
+    feats = feature_columns()
+    ordered = frame.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+    splits = walk_forward_splits(frame, n_splits=n_splits)
+    y_true: list[int] = []
+    y_proba: list[float] = []
+    for train_idx, test_idx in splits:
+        train = ordered.loc[train_idx]
+        test = ordered.loc[test_idx]
+        model = make_model(model_name, seed)
+        model.fit(train[feats], train["label"])
+        proba = model.predict_proba(test[feats])[:, 1]
+        y_true.extend(test["label"].tolist())
+        y_proba.extend(proba.tolist())
+    return format_reliability_table(calibration_report(y_true, y_proba, n_bins=10))
+
+
 def main() -> None:  # pragma: no cover - thin CLI wrapper
     from etl.paths import LOCAL_OUTPUT_ENV
     from models.dataset import build_training_frame
@@ -311,6 +395,10 @@ def main() -> None:  # pragma: no cover - thin CLI wrapper
     print("\n=== Walk-forward winner-prediction summary ===")
     for k, v in summary.items():
         print(f"  {k}: {v}")
+    print("\n=== Reliability diagram (logreg, calibrated) ===")
+    print(_reliability_diagram_text(frame, "logreg"))
+    print("\n=== Reliability diagram (hgb, calibrated) ===")
+    print(_reliability_diagram_text(frame, "hgb"))
 
 
 if __name__ == "__main__":  # pragma: no cover
