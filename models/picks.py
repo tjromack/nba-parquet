@@ -76,6 +76,24 @@ _PICK_DISCLAIMER = (
 )
 
 
+# Default guardrails — chosen for an unverified-edge model. Tighten
+# (or relax) deliberately, not by accident; the JSON record captures
+# which thresholds were applied so a reviewer can see the policy.
+#
+# DEFAULT_MAX_DISAGREEMENT_PP: if |model_prob - de_vigged_fair_prob|
+#   exceeds this percentage-point threshold in either direction, the
+#   pick is flagged no_bet rather than betting on what's most likely
+#   a model failure outside its calibrated range. The Game 1 Finals
+#   dry run had 17.2pp disagreement; with the 10pp default that pick
+#   correctly does not fire.
+# DEFAULT_MAX_KELLY_FRACTION: half-Kelly is clamped to this maximum
+#   bankroll fraction. 5% is the practical-bankroll ceiling for any
+#   unverified-edge model — full half-Kelly off a model with no CLV
+#   record is reckless even when the math says +EV.
+DEFAULT_MAX_DISAGREEMENT_PP = 10.0
+DEFAULT_MAX_KELLY_FRACTION = 0.05
+
+
 def abbr_for_team_name(full_name: str) -> str:
     """Look up the 3-letter abbreviation for a full team name.
 
@@ -137,6 +155,12 @@ class Pick:
     expected_value: float | None  # per $1 stake; None for no_bet
     kelly_fraction_half: float | None  # half-Kelly bankroll fraction
     notes: str  # disclaimer + edge caveats
+    # v1.4.0 guardrail audit fields
+    disagreement_pp: float  # |model_prob - fair_home_prob| * 100
+    no_bet_reason: str | None  # "no_edge" | "disagreement_too_large" | None
+    kelly_was_capped: bool  # True if max_kelly_fraction clamp triggered
+    max_disagreement_pp_used: float  # threshold applied at decision time
+    max_kelly_fraction_used: float  # ceiling applied at decision time
 
 
 def _select_outcome_price(h2h_df: pd.DataFrame, team_abbr: str) -> int:
@@ -167,6 +191,8 @@ def generate_pick(
     anchor_sportsbook: str = "pinnacle",
     kelly_scale: float = 0.5,
     published_at: datetime | None = None,
+    max_disagreement_pp: float = DEFAULT_MAX_DISAGREEMENT_PP,
+    max_kelly_fraction: float = DEFAULT_MAX_KELLY_FRACTION,
 ) -> Pick:
     """Combine model probability + market odds into a ``Pick``.
 
@@ -180,6 +206,19 @@ def generate_pick(
     Half-Kelly is the default ``kelly_scale`` — variance reduction
     that practical bankrolls use. Full Kelly is reckless against an
     unverified model.
+
+    Guardrails (v1.4.0):
+    - ``max_disagreement_pp`` (default 10): if the model's probability
+      diverges from the de-vigged sharp-anchor probability by more
+      than this percentage-point threshold in either direction, the
+      pick is auto-flagged ``no_bet`` with reason
+      ``"disagreement_too_large"``. Designed to catch model
+      overconfidence — large disagreement with a sharp market is more
+      likely model failure than genuine edge.
+    - ``max_kelly_fraction`` (default 0.05): half-Kelly is clamped at
+      this maximum bankroll fraction. Even with positive EV at every
+      threshold, recommending >5% of bankroll on an unverified-edge
+      model is irresponsible.
     """
     if not 0.0 <= model_prob_home_win <= 1.0:
         raise ValueError(
@@ -224,29 +263,51 @@ def generate_pick(
         vig_percent=vig_percent,
     )
 
+    # Disagreement guardrail (v1.4.0): how far is the model from the
+    # sharp market's de-vigged probability? Large in either direction
+    # = likely model failure outside its calibrated range, not edge.
+    disagreement_pp = abs(model_prob_home_win - fair_home) * 100.0
+    disagreement_blocks_bet = disagreement_pp > max_disagreement_pp
+
     # EV against the offered prices (after vig). If both negative
     # the pick is no_bet — model agrees with market or model is on
     # the wrong side, either way no edge.
     ev_home = expected_value(model_prob_home_win, home_odds)
     ev_away = expected_value(1.0 - model_prob_home_win, away_odds)
 
-    if ev_home > 0 and ev_home >= ev_away:
+    no_bet_reason: str | None = None
+    kelly_was_capped = False
+
+    if disagreement_blocks_bet:
+        # Auto-flag regardless of EV math; the math is built on an
+        # unreliable probability when the model disagrees this hard.
+        pick_side = "no_bet"
+        pick_odds: int | None = None
+        ev: float | None = None
+        kelly: float | None = None
+        no_bet_reason = "disagreement_too_large"
+    elif ev_home > 0 and ev_home >= ev_away:
         pick_side = "home"
-        pick_odds: int | None = home_odds
-        ev: float | None = ev_home
-        kelly: float | None = kelly_fraction(
-            model_prob_home_win, home_odds, scale=kelly_scale
-        )
+        pick_odds = home_odds
+        ev = ev_home
+        raw_kelly = kelly_fraction(model_prob_home_win, home_odds, scale=kelly_scale)
+        kelly_was_capped = raw_kelly > max_kelly_fraction
+        kelly = min(raw_kelly, max_kelly_fraction)
     elif ev_away > 0:
         pick_side = "away"
         pick_odds = away_odds
         ev = ev_away
-        kelly = kelly_fraction(1.0 - model_prob_home_win, away_odds, scale=kelly_scale)
+        raw_kelly = kelly_fraction(
+            1.0 - model_prob_home_win, away_odds, scale=kelly_scale
+        )
+        kelly_was_capped = raw_kelly > max_kelly_fraction
+        kelly = min(raw_kelly, max_kelly_fraction)
     else:
         pick_side = "no_bet"
         pick_odds = None
         ev = None
         kelly = None
+        no_bet_reason = "no_edge"
 
     # Game metadata from the anchor h2h row
     game_row = anchor_h2h.iloc[0]
@@ -278,6 +339,11 @@ def generate_pick(
         expected_value=ev,
         kelly_fraction_half=kelly,
         notes=_PICK_DISCLAIMER,
+        disagreement_pp=disagreement_pp,
+        no_bet_reason=no_bet_reason,
+        kelly_was_capped=kelly_was_capped,
+        max_disagreement_pp_used=max_disagreement_pp,
+        max_kelly_fraction_used=max_kelly_fraction,
     )
 
 
@@ -322,6 +388,12 @@ def _pick_to_dict(pick: Pick) -> dict:
             if pick.kelly_fraction_half is not None
             else None
         ),
+        # v1.4.0 guardrail audit trail
+        "disagreement_pp": round(pick.disagreement_pp, 4),
+        "no_bet_reason": pick.no_bet_reason,
+        "kelly_was_capped": pick.kelly_was_capped,
+        "max_disagreement_pp_used": pick.max_disagreement_pp_used,
+        "max_kelly_fraction_used": pick.max_kelly_fraction_used,
         "notes": pick.notes,
     }
 

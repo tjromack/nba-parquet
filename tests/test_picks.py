@@ -320,6 +320,11 @@ def _sample_pick() -> Pick:
         expected_value=0.04,
         kelly_fraction_half=0.025,
         notes="Educational/demo pick. Model has documented edge limits.",
+        disagreement_pp=0.35,
+        no_bet_reason=None,
+        kelly_was_capped=False,
+        max_disagreement_pp_used=10.0,
+        max_kelly_fraction_used=0.05,
     )
 
 
@@ -370,3 +375,157 @@ def test_publish_pick_json_is_deterministic_per_pick(tmp_path: Path):
     p1 = publish_pick(pick, repo_root=tmp_path / "a", parquet_root=None)
     p2 = publish_pick(pick, repo_root=tmp_path / "b", parquet_root=None)
     assert p1.read_bytes() == p2.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# v1.4.0 commit 2: disagreement guardrail + sizing cap
+# ---------------------------------------------------------------------------
+
+
+def test_disagreement_guardrail_blocks_picks_outside_threshold():
+    """The Finals Game 1 case: model says 0.79 home, market fair says
+    0.62. 17pp gap. With the default 10pp guardrail, this becomes
+    no_bet with reason='disagreement_too_large', no matter how
+    positive the raw EV math looks."""
+    odds = _h2h_odds_df(home_odds=-260, away_odds=215)
+    pick = generate_pick(
+        home_team_abbr="OKC",  # fair_home ~0.694
+        away_team_abbr="IND",
+        model_prob_home_win=0.85,  # 15.6pp above fair — over threshold
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+    )
+    assert pick.pick_side == "no_bet"
+    assert pick.no_bet_reason == "disagreement_too_large"
+    assert pick.expected_value is None
+    assert pick.kelly_fraction_half is None
+    # Disagreement is captured for the audit trail even when no_bet
+    assert pick.disagreement_pp is not None
+    assert pick.disagreement_pp > 10  # documented threshold
+
+
+def test_disagreement_guardrail_threshold_is_configurable():
+    """A more permissive caller (e.g. for diagnostic publishing of
+    extreme picks) can raise the threshold; a more conservative
+    caller can lower it. Default lives in the picks module so the
+    "what's reasonable" decision is auditable in one place."""
+    odds = _h2h_odds_df(home_odds=-260, away_odds=215)
+    # Same 15.6pp disagreement; with threshold=20 it should pass through.
+    pick = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.85,
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+        max_disagreement_pp=20.0,
+    )
+    assert pick.pick_side == "home"  # 0.85 vs offered -260: positive EV
+    assert pick.no_bet_reason is None
+
+
+def test_disagreement_guardrail_triggers_in_either_direction():
+    """A large disagreement in the OPPOSITE direction (model thinks
+    home wins way LESS than market) should also flag no_bet — the
+    model is likely wrong, not finding a contrarian edge."""
+    odds = _h2h_odds_df(home_odds=-260, away_odds=215)  # fair_home ~0.694
+    pick = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.45,  # 24pp below fair — large gap toward dog
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+    )
+    assert pick.pick_side == "no_bet"
+    assert pick.no_bet_reason == "disagreement_too_large"
+
+
+def test_no_bet_reason_distinguishes_no_edge_from_disagreement():
+    """If both sides are slightly -EV (market agrees with model within
+    the vig), no_bet_reason is 'no_edge'. If disagreement is huge
+    but model picks the favorite side at positive raw EV, no_bet_reason
+    is 'disagreement_too_large'. These are different signals and the
+    JSON should make the distinction visible."""
+    odds = _h2h_odds_df(home_odds=-260, away_odds=215)
+    # Model agrees with fair (0.694) — no_bet because no edge
+    pick_no_edge = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.694,
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+    )
+    assert pick_no_edge.pick_side == "no_bet"
+    assert pick_no_edge.no_bet_reason == "no_edge"
+
+
+def test_kelly_cap_clamps_to_max_fraction():
+    """A high-edge bet (e.g. model 0.85 at -150 odds) computes a Kelly
+    fraction that would otherwise recommend a reckless bankroll
+    fraction. Default cap is 5% — half-Kelly clamped at that
+    ceiling protects against an unverified-edge model recommending
+    20%+ bankroll bets."""
+    odds = _h2h_odds_df(home_odds=-150, away_odds=130)
+    # Permissive disagreement threshold so we actually get a "home"
+    # pick rather than no_bet — we want to test the Kelly clamp.
+    pick = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.85,
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+        max_disagreement_pp=50.0,  # let it through
+        max_kelly_fraction=0.05,
+    )
+    assert pick.pick_side == "home"
+    assert pick.kelly_fraction_half is not None
+    assert pick.kelly_fraction_half <= 0.05 + 1e-9
+    assert pick.kelly_was_capped is True
+
+
+def test_kelly_cap_not_triggered_on_modest_edges():
+    """Edge ~3% with -110 odds → uncapped Kelly fraction (something
+    like 0.05-0.06 half-Kelly) — should NOT be clamped if it lands
+    below the cap."""
+    odds = _h2h_odds_df(home_odds=-110, away_odds=-110)
+    # Model says 0.55 (fair = 0.5), small positive EV
+    pick = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.55,
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+        max_disagreement_pp=50.0,
+        max_kelly_fraction=0.1,  # generous cap
+    )
+    assert pick.pick_side == "home"
+    assert pick.kelly_was_capped is False
+
+
+def test_pick_json_includes_guardrail_audit_fields():
+    """JSON snapshot must carry the guardrail decision audit trail:
+    disagreement_pp, no_bet_reason, kelly_was_capped, the thresholds
+    that were used. So a reviewer can reconstruct WHY a pick was
+    no_bet or capped."""
+    odds = _h2h_odds_df(home_odds=-260, away_odds=215)
+    pick = generate_pick(
+        home_team_abbr="OKC",
+        away_team_abbr="IND",
+        model_prob_home_win=0.85,
+        odds_df=odds,
+        model_version="test-sha",
+        model_features={},
+    )
+    from models.picks import _pick_to_dict
+
+    d = _pick_to_dict(pick)
+    assert "disagreement_pp" in d
+    assert "no_bet_reason" in d
+    assert "kelly_was_capped" in d
+    assert "max_disagreement_pp_used" in d
+    assert "max_kelly_fraction_used" in d
