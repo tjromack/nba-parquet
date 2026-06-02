@@ -427,6 +427,76 @@ Weak candidates (skip these):
   README Phase 4b table for the four-snapshot progression that makes
   the lift attributable to data completeness, not model tuning.
 
+### Layered methodology beats perfect methodology: v1.4.0 calibration overshot, guardrail caught it
+
+- **When**: 2026-06-01 (v1.4.0, NBA Finals Game 1 dry-run)
+- **What happened**: The first attempt to publish a real model pick
+  for NBA Finals Game 1 (NYK @ SAS) produced an alarming output: the
+  uncalibrated logreg predicted SAS wins 79.4% — 17.2pp above
+  Pinnacle's de-vigged fair probability of 62.2% on the most liquid
+  NBA market of the year — and the EV math then recommended betting
+  21.3% of bankroll. Clearly wrong. v1.4.0 added two defensive
+  layers and re-ran:
+    1. *Isotonic calibration* (CalibratedClassifierCV with internal
+       5-fold CV inside each walk-forward training set) pulled the
+       prediction from 0.7943 down to 0.5095. **It overshot in the
+       opposite direction.** Pre-calibration the model was 17pp ABOVE
+       market; post-calibration it's 11pp BELOW market. The true
+       probability is somewhere in between (probably close to
+       market's 0.62). Isotonic with sparse tail data didn't thread
+       the needle.
+    2. *Disagreement guardrail* (refuse any pick where
+       |model_prob - fair_market_prob| > 10pp) caught the residual
+       11.3pp gap and auto-flagged the pick `no_bet` with reason
+       `disagreement_too_large`. EV was not computed. No bet was
+       recommended.
+  
+  The first public published pick is therefore a `no_bet` — committed
+  to git at `b07bba9` with the full audit trail in
+  `picks/1aae688472781f1a1aaf3efdb38e884b.json` + the methodology
+  sidecar at `picks/2026-06-03.md`.
+
+- **What it demonstrates**: **Layered methodology beats perfect
+  methodology.** The raw model is overconfident at the extremes
+  (no surprise — it's a vanilla logreg on rolling features, with no
+  knowledge of matchup-specific dynamics). The calibrator is
+  imperfect on sparse tail data (no surprise — isotonic with internal
+  5-fold CV has small calibration sets at the [0.7+, 0.8] range).
+  Either layer alone would produce a wrong recommendation. Both
+  layers together — plus the explicit policy guardrail saying "we
+  refuse to bet when we can't agree with a sharp market" — produced
+  the correct decision: do not bet this game.
+  
+  This is the architectural argument for defense in depth in any
+  decision system that consumes ML output. **Don't try to make the
+  model perfect; make the layers around the model robust to
+  imperfect model output.** The model is one component of a system
+  that includes calibration (statistical layer), guardrails (policy
+  layer), sizing limits (risk layer), and disclosure (transparency
+  layer). Each layer compensates for the previous layer's known
+  failure modes.
+  
+  Also a real argument for **publishing decisions even when the
+  decision is no-action**. Most pick services hide their no-bets; you
+  can't tell from outside whether they have discipline. The first
+  public artifact of this system being an explicit, audit-trailed
+  `no_bet` is itself the methodology demonstration — far more
+  defensible than the original "model says 79%, bet 21% of bankroll"
+  output would have been.
+
+- **Where to look**:
+  - [`models/calibration.py`](../models/calibration.py) for the
+    diagnostic math (ECE, MCE, reliability table)
+  - [`models/train.py`](../models/train.py) `make_model()` for
+    the CalibratedClassifierCV wrap
+  - [`models/picks.py`](../models/picks.py) for the 10pp guardrail
+    + 5% Kelly cap policy
+  - [`picks/2026-06-03.md`](../picks/2026-06-03.md) for the
+    user-facing narrative of the same arc
+  - commit `b07bba9` for the verifiability-anchor pick
+  - commits `cf1ca52` (calibration) and `ae976e0` (guardrails) for
+    the v1.4.0 implementation
+
 ## Template
 
 ```markdown

@@ -175,6 +175,26 @@ Three distinct lifts, each with a defensible mechanism:
 
 Even at parity with the strongest baseline, the headline isn't "model wins." The headline is *the methodology arc*: leak-free per-team feature lagging (regression-tested), strict date-boundary walk-forward evaluation (no random k-fold), three named baselines all reported on the same OOF test rows, deterministic + MLflow-tracked runs, defensible data-quality handling (5 neutral-site games dropped from 1,305 with a logged warning), and the discipline to report each iteration's numbers truthfully — including a small log-loss regression I then traced to its actual root cause rather than papering over with a tuning hack.
 
+#### v1.4.0 — calibration + picks-layer guardrails
+
+The 2026 NBA Finals Game 1 dry run surfaced a real problem the bulk-load story hadn't: an *un-calibrated* model can be confidently wrong at the extremes. On the NYK @ SAS Game 1 matchup (10-0 +24 NetRtg road team against a 6-4 +5 NetRtg home team), the raw model predicted **0.7943** for SAS to win at home — a 17.2pp disagreement with Pinnacle's de-vigged fair probability of 0.6225 on the most liquid NBA market of the year. The EV math then said +23.8% with a half-Kelly recommendation of 21.3% of bankroll. That's not actionable; it's a signal the model is making predictions outside its calibrated range.
+
+v1.4.0 wires in two layers of defense:
+
+1. **Isotonic calibration** (`models/calibration.py` + `CalibratedClassifierCV(method='isotonic', cv=5)` wrapping both base estimators). Internal 5-fold CV inside each walk-forward training set fits a monotonic calibrator on top of the base model's outputs. The leakage firewall is preserved — calibration is fit on training-only data, tested on the walk-forward test rows. New diagnostic metrics `ece` (Expected Calibration Error) and `mce` (Maximum Calibration Error) surface where on the probability scale the model is well-calibrated and where it isn't. Reliability diagrams print after every train run.
+
+2. **Disagreement guardrail + sizing cap** (`models/picks.py`). If the model's probability disagrees with the de-vigged sharp-market probability by more than 10 percentage points in either direction, the pick is auto-flagged `no_bet` with reason `"disagreement_too_large"`. EV is not computed (the math is unreliable when the probability is). Half-Kelly bankroll fraction is independently clamped at 5% — even when a pick fires, the system refuses to recommend reckless sizing on an unverified-edge model.
+
+**The first public published pick is a `no_bet`**, and that's the artifact. [`picks/2026-06-03.md`](picks/2026-06-03.md) documents the three-layer methodology working: raw 0.7943 → calibrated 0.5095 → guardrail caught the residual 11.3pp gap. The JSON snapshot at [`picks/1aae688472781f1a1aaf3efdb38e884b.json`](picks/1aae688472781f1a1aaf3efdb38e884b.json) is the verifiable pre-tipoff record; the git commit timestamp is the cryptographic anchor.
+
+Three observations worth flagging:
+
+- **Calibration overshot in the opposite direction.** Pre-calibration the model was 17pp above market; post-calibration it's 11pp below market. The truth sits somewhere in between (probably close to the market's 0.62). Isotonic with sparse tail data didn't perfectly thread the needle. The v1.4.x calibration follow-ups (Platt as a more conservative alternative, larger internal CV folds, prefit-calibration with a dedicated held-out set) are queued in `TODO.md`.
+- **The system worked correctly even though no single layer is perfect.** The raw model is overconfident; the calibrator overcorrects; the guardrail catches the residual. Each layer compensates for the previous layer's limits — a defensible architecture for an unverified model.
+- **The first public pick being a `no_bet` is a feature, not a bug.** Most pick services hide their no-bets and only publish confident calls; you can't tell from outside whether they have discipline. The system's first published decision being an explicit, audit-trailed refusal is itself the methodology demonstration.
+
+CLV tracking on this and subsequent Finals games will be the actual signal about whether the model has any edge. One game's outcome is noise. The record starts now.
+
 Reproduce + inspect from a clean clone:
 
 ```powershell

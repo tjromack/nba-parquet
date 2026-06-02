@@ -308,16 +308,91 @@ slightly worse for both models (logreg 0.654 → 0.662, hgb 1.019 →
 more confident picks whose confidence isn't always justified — a
 calibration story. Brier score barely moved (0.231 → 0.232) which is
 consistent. ~~Calibration (Platt scaling / isotonic) is the natural
-v1.3.x follow-up~~ **Resolved in v1.3.1 — but not by calibration code.**
-The v1.3.0 bulk-load was `NBA_SEASON_TYPE="Regular Season"` only;
-playoff advanced columns were median-imputed by the sklearn pipeline.
-Filling the playoff advanced data (`bulk_load_advanced_only.py` with
-`NBA_SEASON_TYPE=Playoffs`) closed the gap to the strongest baseline
-to **0.2pp** and improved both log loss (0.662 → 0.644) and Brier
-(0.232 → 0.226) without changing any model code. The "regression" was
-median-imputed playoff features producing over-confident picks; real
-data fixed the calibration organically. Methodology lesson captured
-in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
+v1.3.x follow-up~~ **Partially resolved in v1.3.1 by data completeness,
+then properly addressed in v1.4.0 (see below).**
+
+### Phase C — market-comparison + edge-honest picks layer (v1.4.0 shipped)
+
+The whole "publish picks vs the market for verifiability" project from
+the Phase C plan landed across multiple commits. Six commits in order:
+
+1. **Odds ingestion** (`5b9a2bf`) — The Odds API v4 client → long-format
+   parquet zone at `raw/nba/odds/`, partitioned by ET game_date. ~9
+   tests against mocked API fixtures.
+2. **Market math** (`53ca57f`) — `models/market.py`: American-decimal
+   conversion, two-way de-vigging, expected-value per $1 stake, full-
+   and fractional-Kelly bankroll sizing. ~20 tests against canonical
+   sports-betting formulas.
+3. **Picks data model** (`f12ecc2`) — `Pick` dataclass with full audit
+   trail, JSON+parquet serialization, `picks/<id>.json` git-tracked
+   artifacts as verifiability anchor. `picks/README.md` with
+   responsible-gambling disclaimer top + bottom.
+4. **Pinnacle pull from EU region** (`ef6a552`) — The Odds API's US
+   region excludes Pinnacle entirely (Pinnacle doesn't legally
+   operate in most US states); adding `eu` to the regions parameter
+   pulls Pinnacle for the sharp-anchor de-vigging while keeping US
+   books available for actionable pricing.
+5. **Spark UTC timezone + tz-aware datetimes** (`0b5b080`, `8e911bb`) —
+   discovered the parquet round-trip was silently shifting timestamps
+   by +5 hours on the user's Windows machine. The fix moves naive UTC
+   datetimes to tz-aware UTC end-to-end so storage is unambiguous
+   regardless of session config or JVM default.
+
+**v1.4.0 — isotonic calibration + disagreement guardrails (`cf1ca52`,
+`ae976e0`):**
+
+The Finals Game 1 dry-run published a pick with model probability
+0.7943 (17pp above Pinnacle's 0.6225 de-vigged fair) and a half-Kelly
+recommendation of 21.3% of bankroll. Not actionable. Two layers of
+v1.4.0 defense:
+
+- **Isotonic calibration** wraps both base estimators in
+  `CalibratedClassifierCV(method='isotonic', cv=5)`. Internal CV fits
+  the calibrator on each walk-forward training set; leakage firewall
+  preserved. New ECE/MCE diagnostics + reliability diagrams in the
+  train CLI output. Big win for HGB (log loss 1.058 → 0.682, Brier
+  0.306 → 0.242). Logreg accuracy unchanged, log loss slightly up
+  (calibration adds variance from internal CV folds on already-well-
+  calibrated middle of the distribution).
+- **Disagreement guardrail** in `generate_pick`: |model_prob -
+  fair_market_prob| > 10pp → auto-flag `no_bet` with reason
+  `"disagreement_too_large"`. Half-Kelly clamped at 5% bankroll
+  ceiling regardless of computed EV. The Game 1 pick post-calibration
+  was 0.5095 (now 11.3pp BELOW market — calibration overshot), still
+  outside the threshold, correctly flagged `no_bet`.
+
+**The first public published pick is a no_bet** — `picks/2026-06-03.md`
+documents the full three-layer methodology arc. Verifiability anchor
+in git commit `b07bba9`.
+
+### v1.4.x follow-ups (surfaced by Game 1)
+
+Captured here rather than absorbed silently — these are the specific
+items the Game 1 result identified.
+
+1. **Better tail calibration.** Isotonic with internal 5-fold CV on
+   sparse-tail data overcorrects. Options to try:
+   - `cv=10` (more folds → smaller per-fold calibration sets but more
+     averaging)
+   - `method='sigmoid'` (Platt scaling, more conservative on small
+     samples)
+   - `cv='prefit'` with a dedicated held-out calibration set from
+     the most recent training games (since rolling features make
+     recent games more informative)
+2. **Bootstrap prediction intervals.** A point estimate of 0.5095
+   hides that the model has no idea where the true probability is.
+   N=100 bootstrap-trained models would give us
+   `model_prob_home_win_p5 / _p95` fields in the JSON; a "0.51 (CI:
+   0.42-0.71)" reads way more honestly than "0.51" alone.
+3. **CLV tracking automation.** Add a `closing_line_recorded_at` +
+   `closing_line_*` partition in the picks parquet so a cron-style
+   script can capture the closing line ~5 minutes pre-tipoff and
+   compute CLV against the published pick. Currently this would be a
+   manual edit. Needed before we have a real track record.
+4. **Confidence-based dynamic threshold.** A constant 10pp guardrail
+   is correct policy for an unverified-edge model. Once CLV shows
+   positive results in specific regimes (low-disagreement picks,
+   particular feature ranges, etc.), the threshold can adapt. v1.5.x.
 
 **Side benefits that came out of Phase A/B debugging:**
 - nba_api endpoint deprecation discovered: `BoxScoreAdvancedV2`
