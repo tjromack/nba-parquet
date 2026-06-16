@@ -403,6 +403,21 @@ items the Game 1 result identified.
   defensively now, so notebook / one-liner invocations work on Windows
   without manual env-var dance.
 
+5. **Test hygiene: defend against `LOCAL_OUTPUT_DIR` env var.**
+   Surfaced during the 2025-26 season wrap-up: if the developer has
+   `LOCAL_OUTPUT_DIR` set in their shell (as they do during real
+   pipeline runs), 5 `tests/test_ingest.py` tests fail and one hangs
+   on a real `nba_api` call. Root cause: `ingest_box_scores(_bulk)`
+   checks `if not s3_bucket and not is_local_mode()` before raising
+   `ValueError`; with `LOCAL_OUTPUT_DIR` set, `is_local_mode()` is
+   True and the early-exit doesn't fire, the function continues into
+   real network calls. Tests assume an unset env. **Fix**: add an
+   autouse conftest fixture that `monkeypatch.delenv("LOCAL_OUTPUT_DIR",
+   raising=False)` for `tests/test_ingest.py` (or globally in
+   `tests/conftest.py`) so tests are independent of shell state. ~15
+   minutes of work; categorically a test hygiene improvement, not a
+   feature.
+
 ### Daily DAG: wire advanced ingest into the catch-up path (Phase B follow-up)
 
 Currently the bulk-load script ingests both traditional and advanced,

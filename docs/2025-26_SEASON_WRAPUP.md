@@ -16,12 +16,21 @@ after.
 
 ---
 
-## Phase 1 — Final-state verification (1-2 hours)
+## Phase 1 — Final-state verification (1-2 hours) — ✅ COMPLETE 2026-06-17
+
+> **Season-end retrain headline**: **logreg edged the strongest
+> baseline for the first time** — 0.6407 vs 0.6366 (+0.4pp on a
+> 988-game OOF test set). Logreg log_loss 0.6444, Brier 0.2266,
+> ECE 0.0612, MCE 0.1350. HGB ECE collapsed 0.054 → 0.0375 and
+> HGB MCE collapsed 0.436 → 0.2544 — the worst-bucket calibration
+> got dramatically better with Finals games + retraining. **Frozen
+> as the 2025-26 season-final model artifact.** This is the v1.5.0
+> release-notes headline and the blog post's opening hook.
 
 Make sure every Finals game is in the data and the model reflects
 the complete season.
 
-- [ ] **Confirm final catchup ran through Finals Game 5**
+- [x] **Confirm final catchup ran through Finals Game 5**
   ```powershell
   .\scripts\catch_up.ps1
   ```
@@ -30,7 +39,7 @@ the complete season.
   .venv\Scripts\python.exe -c "import pandas as pd; df = pd.read_parquet('out/processed/nba/team_game_stats'); print('latest game_date:', df['game_date'].astype(str).max()); print('Finals rows:'); finals = df[df['game_date'].astype(str) >= '2026-06-03']; print(finals[['game_date','team_abbreviation','opponent_abbreviation','is_home','win','pts']].to_string(index=False))"
   ```
 
-- [ ] **Backfill any missing playoff advanced data**
+- [x] **Backfill any missing playoff advanced data**
   ```powershell
   $env:LOCAL_OUTPUT_DIR = "$PWD\out"
   $env:NBA_SEASON_TYPE = "Playoffs"
@@ -40,14 +49,14 @@ the complete season.
   only ingests traditional). Picks up advanced ORtg/DRtg/Pace for
   any missing playoff partitions.
 
-- [ ] **Rebuild processed + features from raw**
+- [x] **Rebuild processed + features from raw**
   ```powershell
   .venv\Scripts\python.exe scripts\rebuild_from_raw.py
   ```
   ~20-30 seconds. Ensures all derived layers reflect the final raw
   state including the Finals.
 
-- [ ] **Final season-end retrain**
+- [x] **Final season-end retrain**
   ```powershell
   .venv\Scripts\python.exe -m models.train
   ```
@@ -56,14 +65,23 @@ the complete season.
   The Finals adds 5 games to training data; numbers shouldn't move
   meaningfully but you want the artifact frozen at season-end state.
 
-- [ ] **Run the full test suite one more time**
+- [x] **Run the full test suite one more time**
   ```powershell
   .venv\Scripts\python.exe -m pytest tests/ -m "not integration"
   ```
   Should be 130 passed, 1 skipped. If anything regresses, fix
   before tagging the season-end release.
 
-- [ ] **Commit any data updates that ended up touched** (mostly
+  **Outcome 2026-06-17**: 130 passed, 1 skipped, 2 warnings in
+  51.05s. One snag during the wrap-up itself: `LOCAL_OUTPUT_DIR`
+  set in the developer shell poisoned 5 `tests/test_ingest.py`
+  tests and caused the 6th to hang on a real `nba_api` call.
+  Unsetting the env var (`Remove-Item Env:\LOCAL_OUTPUT_DIR`)
+  before running pytest resolved it. Test-hygiene fix queued as
+  a v1.5.x backlog item in TODO.md (autouse conftest fixture
+  to make tests robust to shell state).
+
+- [x] **Commit any data updates that ended up touched** (mostly
   none — `out/` is gitignored — but `models/artifacts/` is also
   gitignored so the new joblib stays local. The point of this step
   is to verify nothing leaked into git accidentally):
@@ -71,6 +89,8 @@ the complete season.
   git status
   # expect: nothing changed unless you regenerated picks
   ```
+  **Outcome**: working tree clean (only this checklist file and
+  TODO.md updated for record-keeping).
 
 ---
 
