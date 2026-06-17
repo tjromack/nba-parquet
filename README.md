@@ -9,7 +9,9 @@
 [![CI](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-> 🎙️ **For interviews and presentations**: [`docs/FINALS_2026_CAPSTONE.md`](docs/FINALS_2026_CAPSTONE.md) — the 2026 NBA Finals as the live demo. 90-second pitch, five-minute walk-through path with specific files to open, live ledger of every published pick, three engineering stories worth telling in detail, and anticipated-questions prep. The system is still running — Finals games publish picks in real time.
+> 🏆 **2025-26 NBA season concluded** — system ran live through playoffs + Finals (NYK over SAS, 4-1, concluded 2026-06-13). Season-final retrain shows logreg edged the strongest baseline for the first time (0.6407 vs 0.6366, +0.4pp). Full series ledger + final tally in [`docs/FINALS_2026_CAPSTONE.md`](docs/FINALS_2026_CAPSTONE.md). System resumes for 2026-27 in October — see [`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md) for the wrap-up checklist and resumption notes.
+>
+> 🎙️ **For interviews and presentations**: [`docs/FINALS_2026_CAPSTONE.md`](docs/FINALS_2026_CAPSTONE.md) — the 2026 NBA Finals as the live demo. 90-second pitch, five-minute walk-through path with specific files to open, full series ledger, three engineering stories worth telling in detail, and anticipated-questions prep.
 >
 > 📋 **Need to explain this project to someone?** See [`docs/PROJECT_QA.md`](docs/PROJECT_QA.md) — the same six questions answered in both technical and layman terms, plus 30-second / 2-minute / 30-minute pitches.
 >

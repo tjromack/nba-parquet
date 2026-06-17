@@ -365,10 +365,17 @@ v1.4.0 defense:
 documents the full three-layer methodology arc. Verifiability anchor
 in git commit `b07bba9`.
 
-### v1.4.x follow-ups (surfaced by Game 1)
+### Future builds — 2026-27 NBA season or later
 
-Captured here rather than absorbed silently — these are the specific
-items the Game 1 result identified.
+The 2025-26 season closed at v1.5.0 with the wrap-up checklist in
+[`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md).
+The items below are queued for the next active period — none are
+blocking and the system runs cleanly without them. Prioritized by
+"highest learning + showcase value per session of work."
+
+These were originally surfaced by the v1.4.0 Finals Game 1 dry-run
+and the season-end wrap-up; they're the *real* backlog, not vanity
+items.
 
 1. **Better tail calibration.** Isotonic with internal 5-fold CV on
    sparse-tail data overcorrects. Options to try:

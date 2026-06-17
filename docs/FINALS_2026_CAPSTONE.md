@@ -47,15 +47,39 @@ point at; together they tell the engineering story.
 Updated as games complete. Each row links to the verifiable pick JSON
 and (when available) the outcome + closing-line value (CLV).
 
-| Game | Date | Pick | Reason | Model | Market fair | Disagreement | Outcome | Closing line (Pinnacle SAS) | CLV |
-|---|---|---|---|---:|---:|---:|---|---:|---:|
-| 1 | 2026-06-03 | [no_bet](../picks/1aae688472781f1a1aaf3efdb38e884b.json) | disagreement_too_large | 0.5095 | 0.6225 | 11.30pp | _<TODO: NYK won or SAS won? score?>_ | _<TODO: closing line>_ | _<TODO>_ |
-| 2 | _<TBD>_ | _<pending publish>_ | | | | | | | |
-| 3 | _<TBD>_ | _<pending publish>_ | | | | | | | |
-| 4 | _<TBD>_ | _<pending publish>_ | | | | | | | |
-| 5 | _<TBD>_ | _<if needed>_ | | | | | | | |
-| 6 | _<TBD>_ | _<if needed>_ | | | | | | | |
-| 7 | _<TBD>_ | _<if needed>_ | | | | | | | |
+| Game | Date | Pick | Reason | Model | Market fair | Disagreement | Outcome | Closing line | CLV |
+|---|---|---|---|---:|---:|---:|---|---|---|
+| 1 | 2026-06-03 | [no_bet](../picks/1aae688472781f1a1aaf3efdb38e884b.json) | disagreement_too_large | 0.5095 | 0.6225 | 11.30pp | **NYK 105 – SAS 95** (NYK road W; series 1-0) | unavailable | unavailable |
+| 2 | 2026-06-05 | not published | — | — | — | — | **NYK 105 – SAS 104** (NYK road W; series 2-0) | unavailable | n/a |
+| 3 | 2026-06-08 | not published | — | — | — | — | **SAS 115 – NYK 111** (SAS road W; series 2-1) | unavailable | n/a |
+| 4 | 2026-06-10 | not published | — | — | — | — | **NYK 107 – SAS 106** (NYK home W; series 3-1) | unavailable | n/a |
+| 5 | 2026-06-13 | not published | — | — | — | — | **NYK 94 – SAS 90** (NYK road W; clinches 4-1) | unavailable | n/a |
+
+**Reading the ledger.** Only Game 1 has a verifiable pre-tipoff
+published pick in the public record. The decision was a `no_bet`
+flagged by the v1.4.0 disagreement guardrail: the calibrated model
+gave SAS a 51% chance of winning at home; Pinnacle's de-vigged fair
+price said SAS was 62% to win; the 11.3pp gap exceeded the 10pp
+policy threshold and the system refused to bet. **Games 2-5 were not
+re-published** to the picks layer during the series — a deliberate
+choice to avoid stacking the public record with picks that hadn't
+been independently verified for quality.
+
+The Game 1 actual outcome is a small but real data point worth
+naming honestly: the Knicks won 105-95 on the road. **The model's
+directional read (SAS 51% — essentially a coin flip from the
+model's perspective) was closer to the outcome than the market's
+directional read** (SAS 62% — a meaningful favorite). One game is
+noise; this isn't an edge claim. But if the model's "I don't really
+know who wins this game" lands closer to truth than the market's
+strong-favorite read, that's a piece of evidence about where the
+model might add value: matchups the market overconfidently prices,
+not matchups where the model needs to be confident.
+
+The series swept its way through a 4-1 NYK championship: two road
+wins to open, a loss at home, a 1-point home win, and a clinching
+4-point road win in Game 5. None of which the model was asked to
+predict in the public record.
 
 **On reading this table during an interview**: the "Reason" column
 matters more than the "Outcome" column. A no_bet that calls a game
@@ -64,6 +88,43 @@ What matters is whether the *system's policy* (calibration + 10pp
 disagreement guardrail + 5% Kelly cap + full audit trail) is
 defensible. The table is the verifiable record of that policy in
 operation.
+
+## Final tally — series concluded 2026-06-13
+
+**New York Knicks defeated San Antonio Spurs 4-1 in the 2026 NBA
+Finals.** The system published 1 pre-tipoff decision (Game 1, a
+`no_bet`) and elected not to publish for Games 2-5 — the deliberate
+restraint here is part of the methodology demonstration, not a gap
+in it. Most public pick services would have stacked 5 confident
+picks to fill content; this system held to "publish only with
+guardrail-approved decisions" and the public record reflects that.
+
+**The season-end model artifact**, frozen at the close of Game 5,
+crossed above the strongest baseline for the first time:
+
+| Metric | Pre-Finals (v1.4.0) | Season-final | Delta |
+|---|---:|---:|---:|
+| `logreg_accuracy` | 0.6351 | **0.6407** | +0.6pp |
+| `logreg_log_loss` | 0.680 | **0.6444** | -0.036 (better) |
+| `logreg_ece` | 0.063 | **0.0612** | slightly better |
+| **`logreg_minus_best_baseline`** | **-0.002** | **+0.004** | **above baseline** |
+| `hgb_log_loss` | 0.682 | **0.6724** | better |
+| `hgb_ece` | 0.054 | **0.0375** | meaningfully better |
+| `hgb_mce` | 0.436 | **0.2544** | dramatically better |
+
+A 5-game contribution flipping logreg from -0.2pp to +0.4pp vs.
+baseline is *itself* a methodology lesson — on a thin-margin model,
+small data changes can flip the headline. The engineering takeaway
+isn't "the model is now sharp." It's "single-percentage-point claims
+about model accuracy need that kind of caveat baked into how they're
+reported."
+
+**The system continues running for 2026-27.** See
+[docs/2025-26_SEASON_WRAPUP.md](2025-26_SEASON_WRAPUP.md) for the
+season-closing checklist and Phase 5 forward-looking notes. The
+daily catch-up automation, the picks-publishing entrypoint, and the
+v1.4.0 calibration + guardrails will all resume when the 2026-27
+regular season tips off in October.
 
 ## The methodology arc — what each version added
 

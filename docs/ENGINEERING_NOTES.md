@@ -497,6 +497,52 @@ Weak candidates (skip these):
   - commits `cf1ca52` (calibration) and `ae976e0` (guardrails) for
     the v1.4.0 implementation
 
+### A 5-game contribution flipped logreg from -0.2pp to +0.4pp vs baseline — the season-end variance lesson
+
+- **When**: 2026-06-17 (post-Finals, season-final retrain)
+- **What happened**: The 2025-26 NBA Finals concluded with NYK
+  defeating SAS 4-1. The post-season retrain (run after the catchup
+  + advanced-backfill + rebuild_from_raw cycle that ingested all 5
+  Finals games) showed `logreg_accuracy` move from 0.6351 (v1.4.0,
+  pre-Finals) to 0.6407 (season-final) — a +0.6pp move. The best
+  baseline ("better trailing win pct") moved fractionally from
+  0.6336 to 0.6366. The result: `logreg_minus_best_baseline` flipped
+  from **-0.002** (model slightly trails baseline) to **+0.004**
+  (model slightly leads baseline). HGB similarly improved (log loss
+  0.682 → 0.6724, MCE 0.436 → 0.2544). The "model crossed above
+  baseline" framing now applies to the season-final artifact — a
+  meaningfully different headline than v1.4.0's "at baseline parity
+  within noise."
+- **What it demonstrates**: **On a thin-margin model, small data
+  changes can flip the headline.** The contribution of 5 Finals
+  games is 5 out of 1,294 training rows (0.4%). The baseline-relative
+  metric moved 0.6pp — meaningful to the framing, *not* meaningful
+  to whether the model has real edge. A reviewer asking "is the model
+  better than the baseline?" should be told that the answer is
+  noise-noise-noise on this sample size, and that one season is one
+  data point. The right discipline for reporting these results is
+  to:
+  1. Always include the test-set size (988 OOF rows) so the reader
+     can apply their own noise-tolerance heuristic
+  2. Cite the metric *with the same precision* as the noise margin
+     (0.6pp delta on n=988 is well inside Monte-Carlo confidence
+     bounds for the binomial, so "edge" claims should not be made
+     even though the sign flipped)
+  3. Treat the *direction* of the flip as more interesting than
+     the *magnitude* — the model has now been a hair on the positive
+     side for one snapshot; whether it stays there across 2026-27
+     and 2027-28 is the only question worth answering
+- **Where to look**:
+  - `docs/2025-26_SEASON_WRAPUP.md` Phase 1 summary block for the
+    captured pre-/post-Finals metric comparison
+  - `docs/FINALS_2026_CAPSTONE.md` "Final tally" section for the
+    user-facing framing of the same result
+  - The MLflow run logged by the retrain at `./mlruns` (or
+    `./mlruns_2025-26` if archived per Phase 5 step) — the run
+    artifact + parameters are the authoritative record
+  - commit `ba8c161` — the Phase 1 completion commit that
+    captures the season-final state in the wrap-up doc
+
 ## Template
 
 ```markdown
