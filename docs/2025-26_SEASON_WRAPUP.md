@@ -479,8 +479,10 @@ the most additional skills.
 ## Done?
 
 When every box in Phases 1-5 is checked, the 2025-26 season is
-formally closed. The system sits at v1.5.0, fully documented, with
-clean resumption instructions. Future-you (or anyone evaluating
+formally closed and the system sits at v1.5.0, fully documented, with
+clean resumption instructions. **As of 2026-09-21 the v1.5.0 tag is
+still uncut — the repo's current release is v1.4.0.** Everything else
+in this checklist is done; that one box is what's outstanding. Future-you (or anyone evaluating
 this project) can pick it back up in October 2026 with about 15
 minutes of setup.
 

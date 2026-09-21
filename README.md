@@ -9,6 +9,7 @@
 ![Airflow](https://img.shields.io/badge/Airflow-2.9-017CEE?logo=apacheairflow)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900?logo=amazons3)
 [![CI](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml/badge.svg)](https://github.com/tjromack/nba-parquet/actions/workflows/ci.yml)
+[![Live dashboard](https://img.shields.io/badge/live%20dashboard-streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://nba-parquet.streamlit.app)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > 🏆 **2025-26 NBA season concluded** — system ran live through playoffs + Finals (NYK over SAS, 4-1, concluded 2026-06-13). Season-final retrain shows logreg edged the strongest baseline for the first time (0.6407 vs 0.6366, +0.4pp). Full series ledger + final tally in [`docs/FINALS_2026_CAPSTONE.md`](docs/FINALS_2026_CAPSTONE.md). System resumes for 2026-27 in October — see [`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md) for the wrap-up checklist and resumption notes.
@@ -19,7 +20,7 @@
 >
 > 🛠️ **Engineering notes**: [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — a curated log of notable moments from building and operating this: retry recovery, a column-name regression caught against real data, ESPN reconciliation, the Docker parallel-build race fix, and how the daily-ops script became self-healing.
 >
-> 📊 **Live dashboard**: `streamlit run streamlit_app.py` reads the pipeline's output directly and surfaces a leaderboard, per-team rolling trends, head-to-head comparisons, a winner-model **Predictions** view, and a filterable data explorer. See the [Live dashboard](#live-dashboard) section below.
+> 📊 **Live dashboard — [nba-parquet.streamlit.app](https://nba-parquet.streamlit.app)**: hosted on the committed 2025–26 season snapshot. Leaderboard, per-team rolling trends, head-to-head comparisons, a winner-model **Predictions** view, and a filterable data explorer. Run it against your own pipeline output with `streamlit run streamlit_app.py` — see the [Live dashboard](#live-dashboard) section below.
 
 ## Demo at a glance
 
@@ -239,7 +240,9 @@ The honest summary: this is a **data-engineering** portfolio project with a rigo
 
 ### Verify in 60 seconds (no AWS, no Docker, no `.env`)
 
-Three commands and a green test suite — designed for reviewers who want to confirm the project actually works before reading further:
+Fastest path, zero install: open **[nba-parquet.streamlit.app](https://nba-parquet.streamlit.app)** — the dashboard running on this pipeline's own output.
+
+To confirm the code works rather than just the demo, three commands and a green test suite:
 
 ```bash
 git clone https://github.com/tjromack/nba-parquet.git
@@ -370,6 +373,9 @@ you don't accidentally clobber a legitimate-but-slow run.
 
 ## Live dashboard
 
+**▶ [nba-parquet.streamlit.app](https://nba-parquet.streamlit.app)** — no clone,
+no install, no credentials.
+
 A Streamlit app reads the pipeline's `processed/` and `features/` Parquet zones
 directly and exposes five views:
 
@@ -429,14 +435,15 @@ Regenerate after a pipeline run:
 Filenames are deterministic, so a regeneration is a readable diff rather than
 a delete-plus-add pair.
 
-### Deploying publicly
+### Deployed at [nba-parquet.streamlit.app](https://nba-parquet.streamlit.app)
 
-Streamlit Community Cloud (https://share.streamlit.io) hosts apps from public
-GitHub repos on a free tier, and the snapshot above means there is nothing to
-configure per-environment:
+Hosted on Streamlit Community Cloud, reading the committed snapshot above —
+no secrets, no env vars, no per-environment configuration. The same
+`streamlit_app.py` is the entrypoint locally and in the cloud; only the data
+root differs, and the app works that out for itself.
 
-1. Connect the repo at https://share.streamlit.io, entrypoint `streamlit_app.py`
-2. Deploy. No secrets, no env vars — the fallback finds `data/sample/`.
+To stand up your own copy: connect the repo at https://share.streamlit.io with
+entrypoint `streamlit_app.py` and deploy.
 
 One thing to watch on the free tier: Community Cloud installs the root
 `requirements.txt`, which is the **ETL's** dependency set — PySpark (~320 MB),
@@ -515,8 +522,13 @@ Three more views from the validation run, each showing a different part of the a
 - [x] Phase 1 — Core ETL (ingest → transform → S3 write)
 - [x] Phase 2 — Airflow DAG + Docker Compose
 - [x] Phase 3 — Feature engineering + rolling windows
-- [ ] Phase 4 — Cloud deploy (EC2/EMR) + IAM hardening
-- [ ] Phase 5 — Docs, demo, CI/CD
+- [ ] Phase 4 — Cloud deploy (EC2/EMR) + IAM hardening — *deliberately deferred, see [Limits](#limits)*
+- [x] Phase 4b — Prediction model: leak-free frame, three named baselines, walk-forward CV, isotonic calibration, picks-layer guardrails
+- [x] Phase 5 — Docs, demo, CI/CD — GitHub Actions CI, [hosted dashboard](https://nba-parquet.streamlit.app), `PROJECT_QA.md`, `ENGINEERING_NOTES.md`, `FINALS_2026_CAPSTONE.md`
+
+Ran live end-to-end through the 2025–26 playoffs and Finals. Remaining
+backlog — multi-season backfill first, then calibration and CLV work — is in
+[`TODO.md`](TODO.md).
 
 ---
 

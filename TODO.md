@@ -13,14 +13,19 @@
 
 **Phase 5 sub-status:**
 - ✅ GitHub Actions CI (`eb71ac2`) — lint + tests + Docker build verify on every push
-- ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`, `bb1abcb`) — 4 views, reads live pipeline output, includes auto-generated "What's notable" commentary + series-elimination tracking with ACTIVE/OUT status
+- ✅ Streamlit dashboard (`ff0e222`, polish `e70c0c2`, `bb1abcb`) — 5 views, reads live pipeline output, includes auto-generated "What's notable" commentary + series-elimination tracking with ACTIVE/OUT status
+- ✅ Dashboard deployed publicly — **https://nba-parquet.streamlit.app**, hosted on the committed `data/sample/` snapshot. `streamlit_app.py` resolves its own data root, so the same entrypoint serves local pipeline output and the hosted demo with no per-environment config
 - ✅ `docs/PROJECT_QA.md` (`b379be4`) — technical + layman Q&A reference
 - ✅ `docs/ENGINEERING_NOTES.md` (`62f5dd2`, `d728aab`, renamed from `PORTFOLIO_ANECDOTES.md` before going public) — curated log of notable engineering moments
 - ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-in-60s
 - ✅ Daily catch-up automation (`812ba6c`, `62f5dd2`) — `scripts/catch_up.ps1` with `-CleanStale`
 - ⏳ `notebooks/exploratory_eda.ipynb` — narrative companion to Streamlit
 - ⏳ `docs/architecture.md` + `docs/runbook.md` — written-out playbook
-- ⏳ Tag `v1.0.0` release
+- ✅ Releases v1.0.0 → v1.4.0 tagged and published; v1.4.0 is current Latest
+- ⏳ Tag `v1.5.0` — "Season Completed". The checklist and release notes are
+  written out in [`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md),
+  but the tag was never cut. Until it is, "the system sits at v1.5.0" is not
+  true and the docs say v1.4.0
 - ⏳ LinkedIn / portfolio post
 
 **Test gate**: 139 passed, 1 skipped in ~50s (last verified 2026-09-21). The Airflow-load test runs only when `apache-airflow` is installed locally.
@@ -367,8 +372,10 @@ in git commit `b07bba9`.
 
 ### Future builds — 2026-27 NBA season or later
 
-The 2025-26 season closed at v1.5.0 with the wrap-up checklist in
-[`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md).
+The 2025-26 season closed with the wrap-up checklist in
+[`docs/2025-26_SEASON_WRAPUP.md`](docs/2025-26_SEASON_WRAPUP.md). The repo's
+current release is **v1.4.0**; the v1.5.0 "Season Completed" tag is written
+up in that checklist but not yet cut.
 The items below are queued for the next active period — none are
 blocking and the system runs cleanly without them. Prioritized by
 "highest learning + showcase value per session of work."

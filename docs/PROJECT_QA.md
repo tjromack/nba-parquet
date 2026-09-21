@@ -6,6 +6,10 @@
 > version for a recruiter, family member, or anyone non-technical.
 >
 > If you're skimming, jump to the [TL;DR pitches](#tldr-pitches) at the bottom.
+>
+> **Want to see it rather than read about it?**
+> [nba-parquet.streamlit.app](https://nba-parquet.streamlit.app) — the dashboard
+> running on the pipeline's own 2025-26 season output.
 
 ## 1. What is it?
 

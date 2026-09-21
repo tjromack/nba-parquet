@@ -36,6 +36,7 @@ point at; together they tell the engineering story.
 
 | Order | Open | Talking point |
 |---|---|---|
+| 0 | [The live dashboard](https://nba-parquet.streamlit.app) | "Before any code — here's the system's output, hosted. Full 2025-26 season, 2,630 team-game rows, trailing-window features. The sidebar says it's a frozen snapshot, because it is; the live one runs off my own pipeline output. Everything after this is how it got built." |
 | 1 | [README.md hero + architecture diagram](../README.md) | "Daily Airflow DAG, four data zones, partitioned Parquet, 139 tests passing. Lives at nba-parquet on my GitHub. Pinned, only feature repo on my profile." |
 | 2 | [The first published pick — JSON](../picks/1aae688472781f1a1aaf3efdb38e884b.json) | "First public output of the picks layer. NBA Finals Game 1, NYK @ SAS. The pick is `no_bet`. Reason: `disagreement_too_large`. The git commit timestamp on this file predates tipoff — that's the cryptographic proof the decision existed before the game." |
 | 3 | [The sidecar narrative](../picks/2026-06-03.md) | "Three-layer methodology arc. Raw model said 0.79, calibration overshot to 0.51, guardrail caught the residual 11.3pp gap and refused to bet. Each layer is imperfect; the combination produced the right decision." |
@@ -337,8 +338,12 @@ publish script (`scripts/publish_pick.py`) generates a fresh pick
 record for each upcoming game.
 
 **Where to find live state right now**:
-- Dashboard: `streamlit run streamlit_app.py` from a clone — reads
-  the current `out/` directory live.
+- Hosted dashboard: **https://nba-parquet.streamlit.app** — runs on
+  the committed 2025-26 season snapshot, nothing to install. This is
+  the link to open in an interview.
+- Local dashboard: `streamlit run streamlit_app.py` from a clone —
+  reads the current `out/` directory live, so it reflects whatever
+  the last pipeline run produced rather than the frozen snapshot.
 - Public verifiable picks: [`picks/`](../picks/) directory on
   `origin/main`. Every JSON file is a timestamped pre-tipoff
   decision; every Markdown sidecar is the methodology narrative
