@@ -31,9 +31,38 @@ import streamlit as st
 
 st.set_page_config(page_title="nba-parquet", layout="wide", page_icon="🏀")
 
-DATA_ROOT = Path(os.environ.get("LOCAL_OUTPUT_DIR", "./out"))
-PROCESSED_PATH = DATA_ROOT / "processed/nba/team_game_stats"
-FEATURES_PATH = DATA_ROOT / "features/nba/rolling_team_stats"
+APP_DIR = Path(__file__).resolve().parent
+LIVE_DATA_ROOT = Path(os.environ.get("LOCAL_OUTPUT_DIR", "./out"))
+SAMPLE_DATA_ROOT = APP_DIR / "data" / "sample"
+PROCESSED_ZONE = "processed/nba/team_game_stats"
+FEATURES_ZONE = "features/nba/rolling_team_stats"
+
+
+def _resolve_data_root() -> tuple[Path, bool]:
+    """Pick the data root to render, and say whether it's the snapshot.
+
+    Locally the live pipeline output (``$LOCAL_OUTPUT_DIR`` or ``./out``)
+    is what you want, and it wins whenever it actually has both zones.
+    But ``out/`` is gitignored, so a hosted deploy — Streamlit Community
+    Cloud only ever sees committed files — would find nothing there and
+    render an error page. Falling back to the committed snapshot in
+    ``data/sample/`` makes the same entrypoint work in both places with
+    no per-environment configuration.
+
+    Returns ``(root, is_sample)`` so the UI can label the snapshot rather
+    than quietly pass frozen data off as live.
+    """
+    live = LIVE_DATA_ROOT
+    if (live / PROCESSED_ZONE).exists() and (live / FEATURES_ZONE).exists():
+        return live, False
+    if (SAMPLE_DATA_ROOT / PROCESSED_ZONE).exists():
+        return SAMPLE_DATA_ROOT, True
+    return live, False
+
+
+DATA_ROOT, IS_SAMPLE_DATA = _resolve_data_root()
+PROCESSED_PATH = DATA_ROOT / PROCESSED_ZONE
+FEATURES_PATH = DATA_ROOT / FEATURES_ZONE
 
 
 @st.cache_data
@@ -264,6 +293,17 @@ if processed.empty or features.empty:
     )
     st.stop()
 
+if IS_SAMPLE_DATA:
+    # Say so in the UI. A frozen season rendered without a label is the
+    # kind of thing that reads as a live system to a reviewer who never
+    # checks the dates.
+    st.sidebar.info(
+        "**Demo snapshot** — the committed 2025-26 season "
+        f"({len(processed):,} team-game rows, frozen at the Finals), not a "
+        "live feed. Point `LOCAL_OUTPUT_DIR` at a pipeline run to see live "
+        "output instead."
+    )
+
 st.sidebar.metric("Total team-game rows", f"{len(processed):,}")
 st.sidebar.metric("Distinct game dates", processed["game_date"].nunique())
 st.sidebar.metric(
@@ -381,7 +421,7 @@ if view == "Leaderboard":
                 "pts (away)": "{:.1f}",
             }
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -494,7 +534,7 @@ elif view == "Team detail":
                 "AST/TOV": "{:.2f}",
             }
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -552,7 +592,7 @@ elif view == "Head-to-head":
     }
     st.dataframe(
         side_by_side.rename(index=pretty_index),
-        use_container_width=True,
+        width="stretch",
     )
 
     st.subheader("Trajectories overlaid")
@@ -595,11 +635,11 @@ elif view == "Head-to-head":
 
     st.altair_chart(
         _trajectory_chart("rolling_ts_pct", "Rolling TS%", 0.40, 0.70),
-        use_container_width=True,
+        width="stretch",
     )
     st.altair_chart(
         _trajectory_chart("rolling_win_pct", "Rolling win rate", 0.0, 1.0),
-        use_container_width=True,
+        width="stretch",
     )
 
 elif view == "Predictions":
@@ -676,7 +716,7 @@ elif view == "Predictions":
             pred["features"][c] for c in pred["features"] if c.startswith("away_")
         ]
         st.caption("Latest rolling features driving this prediction")
-        st.dataframe(drivers, use_container_width=True, hide_index=True)
+        st.dataframe(drivers, width="stretch", hide_index=True)
 
     st.subheader("Out-of-fold scorecard — model vs. reality")
     st.caption(
@@ -723,7 +763,7 @@ elif view == "Predictions":
                     "result",
                 ]
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -744,5 +784,5 @@ elif view == "Data explorer":
     df = df.sort_values("game_date", ascending=False).reset_index(drop=True)
     df["game_date"] = df["game_date"].dt.strftime("%Y-%m-%d")
 
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
     st.caption(f"{len(df):,} rows shown")

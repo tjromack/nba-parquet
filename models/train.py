@@ -19,9 +19,15 @@ Design contract (the parts that keep this honest):
 ``python -m models.train`` reads the live ``features/`` + ``processed/``
 Parquet (same ``LOCAL_OUTPUT_DIR`` contract as the rest of the repo),
 builds the leak-free training frame, evaluates baselines + both models
-with walk-forward CV, logs everything to a local MLflow file store
-(``./mlruns``), persists the chosen model to ``models/artifacts/``, and
+with walk-forward CV, logs everything to a local MLflow SQLite store
+(``./mlflow.db``), persists the chosen model to ``models/artifacts/``, and
 prints an honest comparison table.
+
+MLflow deprecated the filesystem tracking backend (``./mlruns``) in
+February 2026, so the tracking URI here is a SQLAlchemy one. The store is
+still a single local file -- no server to run -- but it is the backend
+MLflow intends to keep, and it keeps the test suite off a code path that
+is scheduled for removal.
 """
 
 from __future__ import annotations
@@ -50,8 +56,10 @@ PRIMARY_MODEL = "hgb"  # the artifact that gets persisted (spec: HistGBM)
 CALIBRATION_INTERNAL_CV = 5  # for CalibratedClassifierCV inside each walk-forward fold
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TRACKING_URI = (REPO_ROOT / "mlruns").as_uri()
+EXPERIMENT_NAME = "nba-parquet-winner"
+DEFAULT_TRACKING_URI = f"sqlite:///{(REPO_ROOT / 'mlflow.db').as_posix()}"
 DEFAULT_ARTIFACT_DIR = REPO_ROOT / "models" / "artifacts"
+DEFAULT_MLFLOW_ARTIFACT_DIR = REPO_ROOT / "mlartifacts"
 
 
 def _make_base_pipeline(model_name: str, seed: int = SEED) -> Pipeline:
@@ -318,17 +326,33 @@ def train_and_log(
     *,
     tracking_uri: str,
     artifact_dir: Path,
+    mlflow_artifact_dir: Path | None = None,
     n_splits: int = DEFAULT_N_SPLITS,
     seed: int = SEED,
 ) -> dict:
     """Evaluate, log the run to MLflow at ``tracking_uri``, persist the
-    primary model to ``artifact_dir``. Returns the summary dict."""
+    primary model to ``artifact_dir``. Returns the summary dict.
+
+    ``tracking_uri`` is a SQLAlchemy URI (``sqlite:///...``). With a
+    database backend MLflow no longer derives an artifact location from
+    the tracking URI, so ``mlflow_artifact_dir`` is set explicitly at
+    experiment-creation time -- otherwise artifacts land in a ``./mlruns``
+    relative to whatever the current working directory happens to be,
+    which in tests is the repo.
+    """
     import mlflow
 
     summary = evaluate_all(frame, n_splits=n_splits, seed=seed)
 
+    mlflow_artifact_dir = Path(mlflow_artifact_dir or DEFAULT_MLFLOW_ARTIFACT_DIR)
+    mlflow_artifact_dir.mkdir(parents=True, exist_ok=True)
+
     mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("nba-parquet-winner")
+    if mlflow.get_experiment_by_name(EXPERIMENT_NAME) is None:
+        mlflow.create_experiment(
+            EXPERIMENT_NAME, artifact_location=mlflow_artifact_dir.as_uri()
+        )
+    mlflow.set_experiment(EXPERIMENT_NAME)
     with mlflow.start_run():
         mlflow.log_params(
             {

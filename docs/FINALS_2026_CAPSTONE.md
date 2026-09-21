@@ -36,7 +36,7 @@ point at; together they tell the engineering story.
 
 | Order | Open | Talking point |
 |---|---|---|
-| 1 | [README.md hero + architecture diagram](../README.md) | "Daily Airflow DAG, four data zones, partitioned Parquet, 130 tests passing. Lives at nba-parquet on my GitHub. Pinned, only feature repo on my profile." |
+| 1 | [README.md hero + architecture diagram](../README.md) | "Daily Airflow DAG, four data zones, partitioned Parquet, 139 tests passing. Lives at nba-parquet on my GitHub. Pinned, only feature repo on my profile." |
 | 2 | [The first published pick — JSON](../picks/1aae688472781f1a1aaf3efdb38e884b.json) | "First public output of the picks layer. NBA Finals Game 1, NYK @ SAS. The pick is `no_bet`. Reason: `disagreement_too_large`. The git commit timestamp on this file predates tipoff — that's the cryptographic proof the decision existed before the game." |
 | 3 | [The sidecar narrative](../picks/2026-06-03.md) | "Three-layer methodology arc. Raw model said 0.79, calibration overshot to 0.51, guardrail caught the residual 11.3pp gap and refused to bet. Each layer is imperfect; the combination produced the right decision." |
 | 4 | [Phase 4b honest results in the README](../README.md#prediction-model-phase-4b--honest-results) | "Four-snapshot progression: 62-game playoff sample → 1,280-game RS bulk-load → +RS-advanced → +playoff-advanced. Each transition has an attributable mechanism. Model lands at -0.2pp vs best baseline — effectively tied. I report that gap rather than tune it away." |
@@ -234,10 +234,10 @@ git clone https://github.com/tjromack/nba-parquet.git
 cd nba-parquet
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -m "not integration"
-# expected: 130 passed, 1 skipped, in ~50s
+# expected: 139 passed, 1 skipped, in ~50s
 ```
 
-130-test suite, real Spark + sklearn under the hood, runs without
+139-test suite, real Spark + sklearn under the hood, runs without
 AWS credentials or network access. The skipped test activates only
 if `apache-airflow` is installed locally.
 

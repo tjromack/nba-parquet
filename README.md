@@ -1,6 +1,8 @@
 # nba-parquet
 
 > **A daily PySpark + Airflow pipeline that turns NBA box scores into model-ready trailing-window features.**
+>
+> **Demonstrates:** leak-free walk-forward evaluation, reported against three named baselines even when the model loses — plus idempotent partitioned Parquet writes, a staging-then-promote DAG, and 139 tests that run with no network and no AWS credentials.
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![PySpark](https://img.shields.io/badge/PySpark-3.5-orange?logo=apachespark)
@@ -31,7 +33,7 @@ Through 2026-05-19 (conference finals): NYK leads at .625 TS% over a full 10-gam
 
 - **What it does.** A daily Airflow DAG ingests NBA box scores from `nba_api`, aggregates them with PySpark into team-game stats (eFG%, true shooting %, AST/TOV, win flag), and writes partitioned Parquet to S3 — then engineers rolling 10-game features (`rolling_ts_pct`, `rolling_win_pct`, home/away split) ready for downstream prediction models.
 - **Why it exists.** Sports-analytics prediction models (survivor pools, spreads, totals) need clean, aggregated, time-windowed signal. This pipeline replaces ad-hoc pandas notebooks with a real data platform: schema-typed, idempotent, partition-aware, daily-orchestrated, retry-safe.
-- **How it's built.** Five-task Airflow DAG (`ingest_raw → transform_and_aggregate → write_processed → write_features → notify_done`), `LocalExecutor` on Postgres, staging-then-promote Parquet writes with **dynamic partition overwrite**, dual-mode destination (S3A or local disk via `LOCAL_OUTPUT_DIR`), and 25 unit tests covering schema, math, partitioning, and DAG load-time guard rails.
+- **How it's built.** Five-task Airflow DAG (`ingest_raw → transform_and_aggregate → write_processed → write_features → notify_done`), `LocalExecutor` on Postgres, staging-then-promote Parquet writes with **dynamic partition overwrite**, dual-mode destination (S3A or local disk via `LOCAL_OUTPUT_DIR`), and 139 unit tests covering schema, math, partitioning, model leakage, market/picks guardrails, and DAG load-time guard rails.
 - **For whom.** Sports-analytics teams who want a model-ready feature layer fed nightly; data-engineering hiring managers reviewing portfolio work; future-me who needs to remember why the staging-then-promote pattern is there. Also a reusable template for any "ingest API → transform → partitioned warehouse" use case (NFL, MLB, fantasy, etc.).
 
 ## Skills demonstrated
@@ -123,7 +125,7 @@ Numbers from the live pipeline run, accumulated through 2026-05-13 (26 days of 2
 | Mean Airflow run duration | 1:11 per day-instance |
 | 14-day backfill total wall-clock | ~16 minutes (sequential, `max_active_runs=1`) |
 | Backfill task instances (initial) | 70 / 70 succeeded, 0 failed, 0 retried |
-| Test suite | 30 passed, 1 skipped in ~33s (zero AWS, zero network access) |
+| Test suite | 139 passed, 1 skipped in ~50s (zero AWS, zero network access) |
 | Hot path failures during ongoing daily ops | 1 transient `nba_api` blip auto-recovered via retry policy |
 | Real-data correctness regressions caught | 2 (`TO`→`tov` rename, partition-overwrite mode) |
 | Teams eliminated / still active | 10 / 6 (computed live from series-state logic) |
@@ -202,17 +204,34 @@ CLV tracking on this and subsequent Finals games will be the actual signal about
 Reproduce + inspect from a clean clone:
 
 ```powershell
-.venv\Scripts\python.exe -m models.train   # walk-forward eval -> ./mlruns, persists models/artifacts/winner_hgb.joblib
-mlflow ui                                   # browse runs/metrics at http://localhost:5000
+.venv\Scripts\python.exe -m models.train           # walk-forward eval -> ./mlflow.db, persists models/artifacts/winner_hgb.joblib
+mlflow ui --backend-store-uri sqlite:///mlflow.db   # browse runs/metrics at http://localhost:5000
 ```
 
-`mlruns/` and `models/artifacts/` are gitignored build outputs — the run is fully reproducible from source, deterministic (fixed seed). The trained model is then visible in the dashboard's **Predictions** view:
+`mlflow.db`, `mlartifacts/` and `models/artifacts/` are gitignored build outputs — the run is fully reproducible from source, deterministic (fixed seed). The trained model is then visible in the dashboard's **Predictions** view:
 
 ![Predictions view: honest framing banner + matchup explorer](demo%20screenshots/Predictions_full_season.png)
 
 The yellow banner up top is the model's own honesty disclosure — same numbers as the table above, in the user-facing flow rather than buried in the docs. The matchup explorer below lets you score any hypothetical pairing from each team's latest rolling-feature snapshot (forward-looking, no leakage — there's no future outcome to compare against). The scorecard further down the page (not shown) grades the model against the *out-of-fold* walk-forward predictions, never against games it trained on.
 
 See [`models/`](models/) and [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) for the leakage firewall and the small-data adaptations the real data forced.
+
+---
+
+## Limits
+
+What this project is not, stated up front so nobody has to reverse-engineer it from the code. Each limit is a deliberate scope decision, not an oversight — the reasoning is given so you can judge whether it was the right call.
+
+| Limit | What that means in practice |
+|---|---|
+| **Not a betting product.** | The picks layer ([`models/picks.py`](models/picks.py), [`picks/`](picks/)) exists to demonstrate calibration and refusal guardrails against a real market price, not to be acted on. The model has no verified edge — at season end it beat the strongest baseline by 0.4pp on 993 out-of-fold games, which is inside the noise band for a sample that size. The first published pick is a `no_bet` for exactly this reason. Nothing here is betting advice, and the repo takes no position on whether you should wager. |
+| **Single-node Spark.** | Every run is `local[*]` on one machine (laptop or one Airflow container). The code is EMR-compatible — S3A config, partitioned writes, no driver-side `collect()` in transforms — but it has never been executed on a multi-node cluster, so cluster-scale behavior (shuffle tuning, executor sizing, skew) is untested. At ~2,600 team-game rows per season, distributed compute would be theater; the patterns are what transfer, not the scale. |
+| **No serving path.** | The trained model is a `joblib` artifact read by a Streamlit process. There is no inference API, no feature store, no model registry promotion gate, no monitoring for drift or staleness in production terms. MLflow here is a run log, not a deployment surface. Scoring is batch-and-render, computed on page load. |
+| **Playoff-sized sample.** | 2025–26 only: one season, ~1,284 usable games after the leak-free frame drops rows without a full trailing window (plus 5 neutral-site games dropped with a logged warning). Walk-forward CV on a single season cannot distinguish a real 0.4pp edge from sampling noise, and season-to-season regime changes (rule changes, pace shifts, roster turnover) are entirely unobserved. Multi-season backfill is the single highest-value next step and is tracked in [`TODO.md`](TODO.md). |
+| **AWS is configured, not provisioned.** | S3 reads/writes work today via `S3_BUCKET` + the S3A connector, and the dual-mode destination means local disk and S3 take the same code path. But Phase 4 (EC2 instance profile, IAM policy, bucket policy, CloudWatch) is not built — every result in this README was produced against local Parquet or a dev bucket. |
+| **Upstream is a scraped-adjacent API.** | `nba_api` wraps `stats.nba.com` endpoints that carry no SLA and no stability contract. A column rename upstream already broke this pipeline once (`TO` → `tov`, caught against real data — see [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md)). Rate-limit sleeps and Airflow retries mitigate; they don't guarantee. |
+
+The honest summary: this is a **data-engineering** portfolio project with a rigorously-evaluated model attached, not a machine-learning result. The thing worth reviewing is the evaluation discipline — that the baselines are named, the splits respect time, and the losing numbers got published anyway.
 
 ---
 
@@ -227,10 +246,10 @@ git clone https://github.com/tjromack/nba-parquet.git
 cd nba-parquet
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -m "not integration"
-# expected: 59 passed, 1 skipped in ~35s
+# expected: 139 passed, 1 skipped in ~50s
 ```
 
-The full 59-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
+The full 139-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
 
 ### Full setup — running the pipeline
 
@@ -381,19 +400,52 @@ contract as the pipeline itself, so whatever data the most recent
 `scripts/run_local.py` or `scripts/catch_up.ps1` invocation produced is
 immediately visible.
 
-### Deploying publicly (optional)
+### The bundled demo snapshot
 
-Streamlit Cloud (https://streamlit.io/cloud) hosts apps from public GitHub repos
-on a free tier. To deploy this app there:
+`out/` is a gitignored build output, so a hosted deploy would find nothing to
+render. [`data/sample/`](data/sample/) is a committed freeze of the full
+2025–26 season — 2,630 team-game rows across both zones, 30 teams,
+2025-10-21 → 2026-06-13 — coalesced to one Parquet file per zone (408 KB
+total) by [`scripts/build_sample_snapshot.py`](scripts/build_sample_snapshot.py).
 
-1. Make the repo public (or use a Streamlit Cloud paid tier for private repos)
-2. Bundle a snapshot of `out/processed/` and `out/features/` into the repo so
-   the cloud-hosted app has data to render (current `out/` is gitignored)
-3. Connect the repo at https://share.streamlit.io and point at
-   `streamlit_app.py`
+The app picks its data root automatically:
 
-For now the app is local-run only — pairing the live pipeline output with a
-public dashboard is a Phase 4-adjacent decision (involves data publication).
+| Condition | Root used | UI |
+|---|---|---|
+| `$LOCAL_OUTPUT_DIR` (or `./out`) has both zones | live pipeline output | normal |
+| it doesn't — e.g. a hosted deploy, or a fresh clone | `data/sample/` | sidebar labels it a **demo snapshot** |
+
+Local development is unaffected: a populated `out/` always wins. The snapshot
+is never passed off as live — the sidebar says it's frozen and at what date.
+The resolution logic and the snapshot's shape are both regression-tested in
+[`tests/test_sample_snapshot.py`](tests/test_sample_snapshot.py).
+
+Regenerate after a pipeline run:
+
+```powershell
+.venv\Scripts\python.exe scriptsuild_sample_snapshot.py
+```
+
+Filenames are deterministic, so a regeneration is a readable diff rather than
+a delete-plus-add pair.
+
+### Deploying publicly
+
+Streamlit Community Cloud (https://share.streamlit.io) hosts apps from public
+GitHub repos on a free tier, and the snapshot above means there is nothing to
+configure per-environment:
+
+1. Connect the repo at https://share.streamlit.io, entrypoint `streamlit_app.py`
+2. Deploy. No secrets, no env vars — the fallback finds `data/sample/`.
+
+One thing to watch on the free tier: Community Cloud installs the root
+`requirements.txt`, which is the **ETL's** dependency set — PySpark (~320 MB),
+MLflow, `nba_api`, `boto3` — none of which the dashboard imports. That's a slow
+build and it may bump the free-tier resource ceiling. If it does,
+[`requirements-dashboard.txt`](requirements-dashboard.txt) is the dashboard's
+actual import closure (seven packages, verified by AST walk); move the
+entrypoint into a subdirectory alongside a copy of it so Community Cloud
+resolves the lighter file first.
 
 ---
 

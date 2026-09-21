@@ -18,9 +18,13 @@ metastore_db/
 derby.log
 .hadoop/
 out/
-# MLflow local file store + persisted model artifacts — both are
+# MLflow local tracking store + persisted model artifacts — all
 # reproducible from a clean clone via `python -m models.train`, so they
-# are build outputs, not source.
+# are build outputs, not source. `mlflow.db` + `mlartifacts/` are the
+# current SQLite-backend pair; `mlruns/` is the pre-2026 file store,
+# still ignored so old working copies don't suddenly start staging it.
+mlflow.db
+mlartifacts/
 mlruns/
 models/artifacts/
 infra/airflow.env

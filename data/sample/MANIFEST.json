@@ -1,0 +1,33 @@
+{
+  "generated_on": "2026-09-21",
+  "source": "C:\\dev\\nba-parquet\\out",
+  "note": "Frozen snapshot of the pipeline's own output, committed so the hosted dashboard has data. Regenerate with scripts/build_sample_snapshot.py.",
+  "zones": {
+    "processed": {
+      "rows": 2630,
+      "teams": 30,
+      "game_dates": 208,
+      "first_game_date": "2025-10-21",
+      "last_game_date": "2026-06-13",
+      "seasons": [
+        "2025"
+      ],
+      "files": [
+        "snapshot-0.parquet"
+      ]
+    },
+    "features": {
+      "rows": 2630,
+      "teams": 30,
+      "game_dates": 208,
+      "first_game_date": "2025-10-21",
+      "last_game_date": "2026-06-13",
+      "seasons": [
+        "2025"
+      ],
+      "files": [
+        "snapshot-0.parquet"
+      ]
+    }
+  }
+}

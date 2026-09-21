@@ -4,8 +4,22 @@ boto3>=1.34.0
 python-dotenv>=1.0.0
 pandas>=2.0.0
 pyarrow>=15.0.0
-streamlit>=1.36.0
+# The dashboard uses `width="stretch"` -- the replacement for the
+# `use_container_width` kwarg Streamlit scheduled for removal. 1.57 is the
+# version that was actually verified against; the true floor is lower but
+# was not tested, and a hosted deploy is the wrong place to find the edge.
+streamlit>=1.57.0
+altair>=5.0.0
 scikit-learn>=1.4.0
-mlflow>=2.12.0
+# Upper bound is deliberate: the MLflow tracking API is the one third-party
+# surface this repo calls that has already deprecated a backend under us (the
+# filesystem store, deprecated Feb 2026 -- see models/train.py). A major
+# version is where that removal lands, so it should be a conscious upgrade,
+# not something a fresh `pip install` does silently.
+mlflow>=2.12.0,<4.0
 joblib>=1.3.0
 requests>=2.31.0
+# pandas pulls tzdata transitively today, but Windows ships no system tz
+# database -- a Windows clone that ends up without it fails at import, not at
+# use. Declared explicitly so the dependency we actually rely on is stated.
+tzdata>=2024.1

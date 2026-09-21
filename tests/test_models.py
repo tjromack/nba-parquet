@@ -479,24 +479,40 @@ def test_evaluate_all_reports_both_models_and_baselines():
 
 def test_train_and_log_creates_mlflow_run_and_artifact(tmp_path):
     """End-to-end: an MLflow run is recorded at the given tracking URI
-    and the primary model artifact is persisted. Uses tmp dirs so the
-    repo's ./mlruns and models/artifacts are never touched by tests."""
+    and the primary model artifact is persisted.
+
+    The tracking URI is SQLite, not a ``file://`` path: MLflow deprecated
+    the filesystem store in Feb 2026, and a test is the worst place to
+    discover that removal. Everything lands under tmp_path so the repo's
+    own ./mlflow.db and models/artifacts are never touched by tests.
+    """
     frame = _separable_training_frame(n_games=90, seed=4)
-    tracking = (tmp_path / "mlruns").as_uri()
+    db = tmp_path / "mlflow.db"
+    tracking = f"sqlite:///{db.as_posix()}"
     artifact_dir = tmp_path / "artifacts"
+    mlflow_artifact_dir = tmp_path / "mlartifacts"
 
     summary = train_and_log(
         frame,
         tracking_uri=tracking,
         artifact_dir=artifact_dir,
+        mlflow_artifact_dir=mlflow_artifact_dir,
         n_splits=4,
         seed=42,
     )
 
     assert "hgb_accuracy" in summary and "logreg_accuracy" in summary
-    # MLflow file store was written.
-    assert (tmp_path / "mlruns").exists()
-    assert any((tmp_path / "mlruns").iterdir())
+    # MLflow SQLite backend store was written, and the run is queryable.
+    assert db.exists() and db.stat().st_size > 0
+    import mlflow
+
+    mlflow.set_tracking_uri(tracking)
+    runs = mlflow.search_runs(experiment_names=["nba-parquet-winner"])
+    assert len(runs) == 1, f"expected exactly one logged run, got {len(runs)}"
+    assert runs.iloc[0]["metrics.n_games"] == summary["n_games"]
+    # The logged artifact went to the explicit artifact root, not ./mlruns.
+    assert any(mlflow_artifact_dir.rglob("*.joblib"))
+    assert not (tmp_path / "mlruns").exists()
     # Primary model artifact persisted and loadable.
     artifacts = list(artifact_dir.glob("*.joblib"))
     assert artifacts, f"no model artifact written to {artifact_dir}"
@@ -505,6 +521,16 @@ def test_train_and_log_creates_mlflow_run_and_artifact(tmp_path):
     model = joblib.load(artifacts[0])
     preds = model.predict(frame[feature_columns()])
     assert len(preds) == len(frame)
+
+
+def test_train_and_log_does_not_use_deprecated_file_store():
+    """Guard rail: the shipped default tracking URI must stay on a
+    database backend. A regression to ``file://.../mlruns`` would pass
+    every other test in this file right up until MLflow drops the store.
+    """
+    from models.train import DEFAULT_TRACKING_URI
+
+    assert DEFAULT_TRACKING_URI.startswith("sqlite:///"), DEFAULT_TRACKING_URI
 
 
 # --------------------------------------------------------------------------

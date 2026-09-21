@@ -23,7 +23,7 @@
 - ⏳ Tag `v1.0.0` release
 - ⏳ LinkedIn / portfolio post
 
-**Test gate**: 30 passed, 1 skipped in ~33s (Airflow-load test runs only when `apache-airflow` is installed locally; the new test exercises series-elimination logic against a synthetic 14-row fixture).
+**Test gate**: 139 passed, 1 skipped in ~50s (last verified 2026-09-21). The Airflow-load test runs only when `apache-airflow` is installed locally.
 **Real-data validation**: 132 team-game rows from 26 distinct game dates (66 games captured), 2026-04-18 → 2026-05-13. Cross-reconciles to ESPN — NYK 8-2 over their last 10 with .630 TS%, OKC perfect 8-0 with .628 TS%, ten teams already eliminated.
 **Operational milestone**: pipeline has run daily through the 2025–26 NBA playoffs with zero data loss across three+ weeks; one transient `nba_api` blip was auto-recovered via Airflow's retry policy. Dashboard now surfaces series-elimination state (10 of 16 teams out, 6 still active) computed live from the processed layer.
 
@@ -377,6 +377,16 @@ These were originally surfaced by the v1.4.0 Finals Game 1 dry-run
 and the season-end wrap-up; they're the *real* backlog, not vanity
 items.
 
+0. **Multi-season backfill — highest value of anything in this list.**
+   Every model number in the README rests on one season (~1,284 usable
+   games). Walk-forward CV on a single season cannot separate the
+   season-end +0.4pp edge over the strongest baseline from sampling
+   noise, and season-to-season regime shifts (rule changes, pace,
+   roster turnover) are entirely unobserved. Backfilling 2021-22
+   through 2024-25 via `scripts/bulk_load_season.py` would take the
+   frame to ~6,000+ games and make the evaluation claim mean something.
+   This is the limit named first in the README's Limits section; until
+   it's closed, the honest framing stays "no verified edge."
 1. **Better tail calibration.** Isotonic with internal 5-fold CV on
    sparse-tail data overcorrects. Options to try:
    - `cv=10` (more folds → smaller per-fold calibration sets but more
