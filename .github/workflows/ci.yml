@@ -60,12 +60,12 @@ jobs:
         run: pytest tests/ -m "not integration" -q | tee pytest-summary.txt
 
       - name: Hold the published counts to the suite
-        # The README and the case study both say "139 passed, 1 skipped". Nothing
+        # The README and the case study both say "160 passed, 1 skipped". Nothing
         # defended that number, so it could drift silently and leave a published
         # claim wrong. Adding or removing a test should fail here until both are
         # updated with it — that is the point, not an inconvenience.
         run: |
-          expected="139 passed, 1 skipped"
+          expected="160 passed, 1 skipped"
           if ! grep -qE "^${expected}" pytest-summary.txt; then
             echo "::error::Published count drifted. README and the case study say '${expected}'."
             echo "Actual summary:"; tail -3 pytest-summary.txt

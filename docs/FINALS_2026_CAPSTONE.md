@@ -37,7 +37,7 @@ point at; together they tell the engineering story.
 | Order | Open | Talking point |
 |---|---|---|
 | 0 | [The live dashboard](https://nba-parquet.streamlit.app) | "Before any code — here's the system's output, hosted. Full 2025-26 season, 2,630 team-game rows, trailing-window features. The sidebar says it's a frozen snapshot, because it is; the live one runs off my own pipeline output. Everything after this is how it got built." |
-| 1 | [README.md hero + architecture diagram](../README.md) | "Daily Airflow DAG, four data zones, partitioned Parquet, 139 tests passing. Lives at nba-parquet on my GitHub. Pinned, only feature repo on my profile." |
+| 1 | [README.md hero + architecture diagram](../README.md) | "Daily Airflow DAG, four data zones, partitioned Parquet, 160 tests passing. Lives at nba-parquet on my GitHub. Pinned, only feature repo on my profile." |
 | 2 | [The first published pick — JSON](../picks/1aae688472781f1a1aaf3efdb38e884b.json) | "First public output of the picks layer. NBA Finals Game 1, NYK @ SAS. The pick is `no_bet`. Reason: `disagreement_too_large`. The git commit timestamp on this file predates tipoff — that's the cryptographic proof the decision existed before the game." |
 | 3 | [The sidecar narrative](../picks/2026-06-03.md) | "Three-layer methodology arc. Raw model said 0.79, calibration overshot to 0.51, guardrail caught the residual 11.3pp gap and refused to bet. Each layer is imperfect; the combination produced the right decision." |
 | 4 | [Phase 4b honest results in the README](../README.md#prediction-model-phase-4b--honest-results) | "Four-snapshot progression: 62-game playoff sample → 1,280-game RS bulk-load → +RS-advanced → +playoff-advanced. Each transition has an attributable mechanism. Model lands at -0.2pp vs best baseline — effectively tied. I report that gap rather than tune it away." |
@@ -228,17 +228,17 @@ valuable than the discipline to ship a positive one. Anyone can
 report wins. The signal of a serious engineer is reporting losses
 with the same precision.
 
-## What you can verify in 60 seconds (the reviewer's "is this real" check)
+## What a reviewer can verify from a cold clone
 
 ```bash
 git clone https://github.com/tjromack/nba-parquet.git
 cd nba-parquet
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -m "not integration"
-# expected: 139 passed, 1 skipped, in ~50s
+# expected: 160 passed, 1 skipped, in ~90s
 ```
 
-139-test suite, real Spark + sklearn under the hood, runs without
+160-test suite, real Spark + sklearn under the hood, runs without
 AWS credentials or network access. The skipped test activates only
 if `apache-airflow` is installed locally.
 

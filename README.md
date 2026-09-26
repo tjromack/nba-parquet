@@ -2,7 +2,7 @@
 
 > **A daily PySpark + Airflow pipeline that turns NBA box scores into model-ready trailing-window features.**
 >
-> **Demonstrates:** leak-free walk-forward evaluation, reported against three named baselines even when the model loses — plus idempotent partitioned Parquet writes, a staging-then-promote DAG, and 139 tests that run with no network and no AWS credentials.
+> **Demonstrates:** leak-free walk-forward evaluation, reported against three named baselines even when the model loses — plus idempotent partitioned Parquet writes, a staging-then-promote DAG, and 160 tests that run with no network and no AWS credentials.
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![PySpark](https://img.shields.io/badge/PySpark-3.5-orange?logo=apachespark)
@@ -34,7 +34,7 @@ Through 2026-05-19 (conference finals): NYK leads at .625 TS% over a full 10-gam
 
 - **What it does.** A daily Airflow DAG ingests NBA box scores from `nba_api`, aggregates them with PySpark into team-game stats (eFG%, true shooting %, AST/TOV, win flag), and writes partitioned Parquet to S3 — then engineers rolling 10-game features (`rolling_ts_pct`, `rolling_win_pct`, home/away split) ready for downstream prediction models.
 - **Why it exists.** Sports-analytics prediction models (survivor pools, spreads, totals) need clean, aggregated, time-windowed signal. This pipeline replaces ad-hoc pandas notebooks with a real data platform: schema-typed, idempotent, partition-aware, daily-orchestrated, retry-safe.
-- **How it's built.** Five-task Airflow DAG (`ingest_raw → transform_and_aggregate → write_processed → write_features → notify_done`), `LocalExecutor` on Postgres, staging-then-promote Parquet writes with **dynamic partition overwrite**, dual-mode destination (S3A or local disk via `LOCAL_OUTPUT_DIR`), and 139 unit tests covering schema, math, partitioning, model leakage, market/picks guardrails, and DAG load-time guard rails.
+- **How it's built.** Five-task Airflow DAG (`ingest_raw → transform_and_aggregate → write_processed → write_features → notify_done`), `LocalExecutor` on Postgres, staging-then-promote Parquet writes with **dynamic partition overwrite**, dual-mode destination (S3A or local disk via `LOCAL_OUTPUT_DIR`), and 160 unit tests covering schema, math, partitioning, model leakage, market/picks guardrails, and DAG load-time guard rails.
 - **For whom.** Sports-analytics teams who want a model-ready feature layer fed nightly; data-engineering hiring managers reviewing portfolio work; future-me who needs to remember why the staging-then-promote pattern is there. Also a reusable template for any "ingest API → transform → partitioned warehouse" use case (NFL, MLB, fantasy, etc.).
 
 ## Skills demonstrated
@@ -54,6 +54,10 @@ Each row points at a specific file or function so reviewers can verify the claim
 | Docker Compose multi-service stack with single-build-owner pattern (avoids parallel image-export race) | [`infra/docker-compose.yml`](infra/docker-compose.yml) |
 | Custom Airflow image extending `apache/airflow` with OpenJDK 17 for PySpark local mode | [`infra/Dockerfile.airflow`](infra/Dockerfile.airflow) |
 | Static guard-rail tests for DAG hygiene (no heavy module-level imports) | [`tests/test_dag.py`](tests/test_dag.py) |
+| Target-leakage firewall: per-team lag-1 on trailing windows, regression-tested | [`models/dataset.py`](models/dataset.py), [How leakage is prevented](#how-leakage-is-prevented) |
+| Date-boundary walk-forward splits (no random k-fold on time-ordered games) | [`models/evaluation.py`](models/evaluation.py) |
+| Data-quality gate on the features layer — grain, window completeness, null contract, ranges, row-count reconciliation | [`etl/quality.py`](etl/quality.py), [`tests/test_quality.py`](tests/test_quality.py) |
+| Idempotent daily re-runs and overlapping backfills, proven against the failure mode they prevent | [`tests/test_idempotency.py`](tests/test_idempotency.py) |
 | Cross-platform dev (Windows + Linux containers) — bind-mounted code, vendored Hadoop winutils, dual S3/local destination | [`tests/conftest.py`](tests/conftest.py), [`etl/paths.py`](etl/paths.py) |
 
 ---
@@ -126,7 +130,7 @@ Numbers from the live pipeline run, accumulated through 2026-05-13 (26 days of 2
 | Mean Airflow run duration | 1:11 per day-instance |
 | 14-day backfill total wall-clock | ~16 minutes (sequential, `max_active_runs=1`) |
 | Backfill task instances (initial) | 70 / 70 succeeded, 0 failed, 0 retried |
-| Test suite | 139 passed, 1 skipped in ~50s (zero AWS, zero network access) |
+| Test suite | 160 passed, 1 skipped in ~90s (zero AWS, zero network access) |
 | Hot path failures during ongoing daily ops | 1 transient `nba_api` blip auto-recovered via retry policy |
 | Real-data correctness regressions caught | 2 (`TO`→`tov` rename, partition-overwrite mode) |
 | Teams eliminated / still active | 10 / 6 (computed live from series-state logic) |
@@ -219,6 +223,180 @@ See [`models/`](models/) and [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTE
 
 ---
 
+## How leakage is prevented
+
+Trailing-window features are the classic place for target leakage, so this
+section states the mechanism and the verification rather than asserting the
+property. If you only read one part of this README as an ML-literate reviewer,
+read this one.
+
+### The window includes the current game — on purpose
+
+[`etl/features.py`](etl/features.py) builds each rolling column over:
+
+```python
+Window.partitionBy("team_id").orderBy("game_date", "game_id").rowsBetween(-9, 0)
+```
+
+That frame is **inclusive of the current row**. `rolling_ts_pct` on BOS's game
+40 is the average across games 31–40, game 40 included. For the features layer
+that is the correct definition: it is a descriptive layer answering "how has
+this team been playing, through this game," and the dashboard's leaderboard
+wants exactly that.
+
+Feeding that column straight into a model that predicts game 40 would leak the
+outcome into the inputs and make every metric downstream a lie. `rowsBetween`
+counts rows, not calendar days, so a team that played four games last week and
+six this week still gets a true 10-game lookback — but the inclusive upper bound
+is the trap.
+
+### The firewall: lag by one game, per team
+
+[`models/dataset.py`](models/dataset.py) is the only thing allowed to turn
+features into model inputs, and it shifts every rolling column by one game
+**within each team's own chronological sequence** before the join. The model
+sees each team's window *as it stood entering the game*, never including it.
+
+Two consequences fall out of that, both deliberate:
+
+- **A team's first game is not a usable training row.** There is no prior
+  window, so it is dropped. `games_in_window` is the drop sentinel because it
+  is never null in the features layer, which means a NaN after the shift
+  uniquely identifies a first game. The other rolling columns can be
+  legitimately null — `rolling_pts_home` before a team has played at home —
+  so using one of them as the sentinel would silently discard valid rows.
+- **The label is the only thing taken from the current game.** Everything else
+  is lagged.
+
+### The second firewall: time-ordered splits
+
+Lagging features is necessary but not sufficient. Random k-fold on time-ordered
+games trains on future results to predict the past, which is leakage of a
+different kind. [`models/evaluation.py`](models/evaluation.py) uses expanding
+walk-forward splits on **date boundaries**: every test game is strictly after
+every training game in its fold, and a single calendar day is never split
+across train and test.
+
+A third, quieter one: every model is an sklearn `Pipeline`, so the imputer and
+scaler are fit **inside each training fold**. Fitting a scaler on all data
+before splitting is a classic silent leak. Isotonic calibration sits inside the
+same boundary — fit on training-only data via internal CV, evaluated on the
+walk-forward test rows.
+
+### How it's verified
+
+Four tests, each pinning one property. They fail loudly with the observed value
+rather than a bare assertion, because a leakage regression that reports
+`assert False` tells you nothing.
+
+| Test | Asserts |
+|---|---|
+| [`test_build_training_frame_is_leak_free`](tests/test_models.py) | Game 3's row carries each team's **game-2** rolling values, not game 3's. Hand-computed: `home_rolling_pts == 102.0`, and the failure message says "Got 103 => the game's own features were used." |
+| [`test_walk_forward_never_leaks_future_into_train`](tests/test_models.py) | For every fold: `max(train_date) < min(test_date)`, the training set expands, and no index appears on both sides. |
+| [`test_walk_forward_does_not_split_a_single_day`](tests/test_models.py) | A date with two games contributes to at most one side of any fold. |
+| [`test_game_is_dropped_when_one_team_has_no_prior_history`](tests/test_models.py) | A game where either side has no prior window is dropped, not imputed to zero. |
+
+Run them alone:
+
+```bash
+pytest tests/test_models.py -k "leak or walk_forward" -v
+```
+
+### What this does not protect against
+
+The lag is *within* the pipeline's own data. If the upstream processed layer
+were itself built from a source that revised a box score after the fact, a
+re-ingest would change a historical row, and the lagged feature would change
+with it. That is correct behaviour for a corrected stat line, but it means
+model metrics are reproducible only against a fixed snapshot of the data —
+which is what [`data/sample/`](data/sample/) is for.
+
+---
+
+## Idempotency, backfills and data quality
+
+Two properties this pipeline claims operationally, each with the mechanism and
+the test that defends it.
+
+### Re-running any day is safe
+
+A failed 2am run can be re-run at 8am. A backfill can sweep a date range that
+overlaps days already loaded. Neither duplicates rows, and neither disturbs a
+day it did not touch.
+
+That does not come from the write code — it comes from one Spark setting:
+
+```python
+.config("spark.sql.sources.partitionOverwriteMode", "dynamic")
+```
+
+combined with `mode("overwrite").partitionBy("season", "game_date")`. Under
+Spark's **default static mode** that same write wipes the entire `processed/`
+prefix and replaces it with whatever the current run holds, so a single-day
+re-run silently destroys the rest of the season. That is not hypothetical —
+it is the bug this setting was added to fix, caught by a 14-day backfill
+rather than by reading documentation.
+
+Re-running is also how a day gets *corrected*: late-arriving and revised box
+scores are normal, so the partition ends up holding the new values, not both
+versions. Idempotent here means convergent, not append-only.
+
+[`tests/test_idempotency.py`](tests/test_idempotency.py) pins all of it:
+
+| Test | Asserts |
+|---|---|
+| `test_rerunning_the_same_day_does_not_duplicate_rows` | Write day 1 twice → still 2 rows. |
+| `test_rerunning_one_day_leaves_other_partitions_intact` | Write day 1, then day 2 → both partitions survive. **This is the test that fails under static mode**, which is what makes it worth having. |
+| `test_rerunning_a_day_replaces_that_days_data` | Re-ingesting day 1 with corrected scoring updates day 1 and leaves day 2 untouched. |
+| `test_a_backfill_range_converges_to_one_row_per_team_game` | A 5-day load followed by an overlapping 3-day re-run still holds one row per (game_date, team). |
+| `test_get_spark_configures_dynamic_partition_overwrite` | The production session actually sets the mode — so the behavioural tests above can't drift into testing a configuration the pipeline doesn't use. |
+
+```bash
+pytest tests/test_idempotency.py -v
+```
+
+### The features layer is gated on assertions, not hope
+
+A silent defect in `features/` — a duplicated team-game, a half-written
+partition, a column that went all-null when an upstream endpoint changed shape
+— crashes nothing. It quietly degrades every number computed downstream, and
+the first symptom is a model metric moving for reasons nobody can explain.
+
+So [`etl/quality.py`](etl/quality.py) runs before the write and fails the task
+on violation. In Airflow that means a visibly red run instead of a green one
+that published bad data.
+
+| Check | Rule |
+|---|---|
+| **Grain** | Exactly one row per `(game_id, team_id)`. A duplicate double-counts a team in every rolling average. |
+| **Window completeness** | `games_in_window` populated and within `[1, window]`. A null or zero means a row with no history behind it; above `window` means the frame bounds are wrong. |
+| **Null rates** | Ten columns must never be null. Seven others may be, **each with a stated reason** — `rolling_pts_home` is null until a team plays at home; the advanced-stat columns are null for partitions ingested before that phase. Nullable columns are reported as a rate, never failed. |
+| **Ranges** | `rolling_win_pct` in [0, 1], shooting percentages in [0, 1.5], points positive. A win rate above 1.0 means the averaging is broken, not that a team won more often than always. |
+| **Row-count reconciliation** | `features` and `processed` share a grain, so the counts must match exactly. A delta means the rolling build dropped or invented rows. |
+| **Partition row counts** | Rows per `season`, logged rather than asserted — a threshold here would fail legitimately on opening night. |
+
+The nullable allowlist is the part that makes the rest mean anything. Without
+it, "some nulls are fine" degrades into "nulls are never checked", so a test
+asserts every nullable column carries a real justification.
+
+A passing run still logs its numbers:
+
+```
+[features quality PASS] rows=2630, teams=30, games=1315, seasons=1,
+  max_games_in_window=10, null_rate__rolling_pts_home=0.8%,
+  null_rate__rolling_pts_away=1.0%, processed_rows=2630
+```
+
+That is the real output against the committed 2025–26 snapshot, and the two
+null rates are the check earning its keep: 0.8% of rows are teams who hadn't
+yet played at home inside their window. Legitimate, surfaced, not failed.
+"0 violations" alone would be less useful six months later than the actual
+shape of the data. Fourteen tests in [`tests/test_quality.py`](tests/test_quality.py)
+corrupt one property at a time and assert the gate catches each for its own
+reason — including that a failed gate leaves **no output behind**.
+
+---
+
 ## Limits
 
 What this project is not, stated up front so nobody has to reverse-engineer it from the code. Each limit is a deliberate scope decision, not an oversight — the reasoning is given so you can judge whether it was the right call.
@@ -227,7 +405,7 @@ What this project is not, stated up front so nobody has to reverse-engineer it f
 |---|---|
 | **Not a betting product.** | The picks layer ([`models/picks.py`](models/picks.py), [`picks/`](picks/)) exists to demonstrate calibration and refusal guardrails against a real market price, not to be acted on. The model has no verified edge — at season end it beat the strongest baseline by 0.4pp on 993 out-of-fold games, which is inside the noise band for a sample that size. The first published pick is a `no_bet` for exactly this reason. Nothing here is betting advice, and the repo takes no position on whether you should wager. |
 | **Single-node Spark.** | Every run is `local[*]` on one machine (laptop or one Airflow container). The code is EMR-compatible — S3A config, partitioned writes, no driver-side `collect()` in transforms — but it has never been executed on a multi-node cluster, so cluster-scale behavior (shuffle tuning, executor sizing, skew) is untested. At ~2,600 team-game rows per season, distributed compute would be theater; the patterns are what transfer, not the scale. |
-| **No serving path.** | The trained model is a `joblib` artifact read by a Streamlit process. There is no inference API, no feature store, no model registry promotion gate, no monitoring for drift or staleness in production terms. MLflow here is a run log, not a deployment surface. Scoring is batch-and-render, computed on page load. |
+| **No serving path, and the feature store is a directory.** | The trained model is a `joblib` artifact read by a Streamlit process. There is no inference API, no model registry promotion gate, no drift or staleness monitoring. The "feature store" is partitioned Parquet on one node — no online store, no point-in-time lookup service, no feature versioning beyond the partition layout. MLflow here is a run log, not a deployment surface. Scoring is batch-and-render, computed on page load. |
 | **Playoff-sized sample.** | 2025–26 only: one season, ~1,284 usable games after the leak-free frame drops rows without a full trailing window (plus 5 neutral-site games dropped with a logged warning). Walk-forward CV on a single season cannot distinguish a real 0.4pp edge from sampling noise, and season-to-season regime changes (rule changes, pace shifts, roster turnover) are entirely unobserved. Multi-season backfill is the single highest-value next step and is tracked in [`TODO.md`](TODO.md). |
 | **AWS is configured, not provisioned.** | S3 reads/writes work today via `S3_BUCKET` + the S3A connector, and the dual-mode destination means local disk and S3 take the same code path. But Phase 4 (EC2 instance profile, IAM policy, bucket policy, CloudWatch) is not built — every result in this README was produced against local Parquet or a dev bucket. |
 | **Upstream is a scraped-adjacent API.** | `nba_api` wraps `stats.nba.com` endpoints that carry no SLA and no stability contract. A column rename upstream already broke this pipeline once (`TO` → `tov`, caught against real data — see [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md)). Rate-limit sleeps and Airflow retries mitigate; they don't guarantee. |
@@ -238,7 +416,7 @@ The honest summary: this is a **data-engineering** portfolio project with a rigo
 
 ## Quick Start
 
-### Verify in 60 seconds (no AWS, no Docker, no `.env`)
+### Verify it yourself (no AWS, no Docker, no `.env`)
 
 Fastest path, zero install: open **[nba-parquet.streamlit.app](https://nba-parquet.streamlit.app)** — the dashboard running on this pipeline's own output.
 
@@ -249,10 +427,10 @@ git clone https://github.com/tjromack/nba-parquet.git
 cd nba-parquet
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests/ -m "not integration"
-# expected: 139 passed, 1 skipped in ~50s
+# expected: 160 passed, 1 skipped in ~90s
 ```
 
-The full 139-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
+The full 160-test suite runs on a local `SparkSession` against bundled fixtures — no network calls, no AWS credentials, no Docker. The single skipped test is the Airflow-load smoke check; it activates only when `apache-airflow` is installed locally.
 
 ### Full setup — running the pipeline
 

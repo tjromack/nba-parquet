@@ -17,7 +17,7 @@
 - ✅ Dashboard deployed publicly — **https://nba-parquet.streamlit.app**, hosted on the committed `data/sample/` snapshot. `streamlit_app.py` resolves its own data root, so the same entrypoint serves local pipeline output and the hosted demo with no per-environment config
 - ✅ `docs/PROJECT_QA.md` (`b379be4`) — technical + layman Q&A reference
 - ✅ `docs/ENGINEERING_NOTES.md` (`62f5dd2`, `d728aab`, renamed from `PORTFOLIO_ANECDOTES.md` before going public) — curated log of notable engineering moments
-- ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-in-60s
+- ✅ README rewrite (`1cb1438`) — Mermaid architecture diagram, Results & Metrics, Verify-it-yourself
 - ✅ Daily catch-up automation (`812ba6c`, `62f5dd2`) — `scripts/catch_up.ps1` with `-CleanStale`
 - ⏳ `notebooks/exploratory_eda.ipynb` — narrative companion to Streamlit
 - ⏳ `docs/architecture.md` + `docs/runbook.md` — written-out playbook
@@ -28,7 +28,7 @@
   true and the docs say v1.4.0
 - ⏳ LinkedIn / portfolio post
 
-**Test gate**: 139 passed, 1 skipped in ~50s (last verified 2026-09-21). The Airflow-load test runs only when `apache-airflow` is installed locally.
+**Test gate**: 160 passed, 1 skipped in ~90s (last verified 2026-09-26). The Airflow-load test runs only when `apache-airflow` is installed locally.
 **Real-data validation**: 132 team-game rows from 26 distinct game dates (66 games captured), 2026-04-18 → 2026-05-13. Cross-reconciles to ESPN — NYK 8-2 over their last 10 with .630 TS%, OKC perfect 8-0 with .628 TS%, ten teams already eliminated.
 **Operational milestone**: pipeline has run daily through the 2025–26 NBA playoffs with zero data loss across three+ weeks; one transient `nba_api` blip was auto-recovered via Airflow's retry policy. Dashboard now surfaces series-elimination state (10 of 16 teams out, 6 still active) computed live from the processed layer.
 

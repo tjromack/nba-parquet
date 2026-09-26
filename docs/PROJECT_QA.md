@@ -16,7 +16,7 @@
 **Technical:** A daily PySpark + Airflow data pipeline that ingests NBA box
 scores from `nba_api`, aggregates them into team-game stats and rolling 10-game
 features, and writes partitioned Parquet to S3 (or local disk). Five-task DAG,
-four data zones (raw → staging → processed → features), 139 unit tests, GitHub
+four data zones (raw → staging → processed → features), 160 unit tests, GitHub
 Actions CI, dynamic-partition-overwrite for safe daily backfills.
 
 **Layman:** A program that automatically grabs every NBA game's box score from
@@ -118,8 +118,10 @@ on S3) — that are hard to fake without an actual working artifact.
   structure for any other "ingest data → transform → time-windowed features"
   use case — the actual code that pulls NBA box scores is small; most of the
   value is in the architecture around it.
-- **Portfolio proof.** I can hand someone the GitHub link and they can verify
-  it works in 60 seconds without setting anything up.
+- **Portfolio proof.** I can hand someone the live dashboard link
+  (nba-parquet.streamlit.app) and they can see it working in seconds without
+  setting anything up; the repo backs that with a suite that runs from a cold
+  clone with no credentials and no network.
 
 ---
 

@@ -141,9 +141,14 @@ def _write_processed(ti, **_: object) -> str:
 
 def _write_features(ti, **_: object) -> str:
     """Read processed history, build 10-game rolling features, write features/."""
+    import logging
+
     from etl.features import build_rolling_features
+    from etl.quality import check_feature_quality, partition_row_counts
     from etl.transform import get_spark
     from etl.write import write_features
+
+    logger = logging.getLogger(__name__)
 
     processed_uri = ti.xcom_pull(task_ids="write_processed")
     if not processed_uri:
@@ -156,8 +161,19 @@ def _write_features(ti, **_: object) -> str:
         # Read the *whole* processed history so the rolling window has data
         # from prior runs to look back over, not just today's slice.
         processed_df = spark.read.parquet(processed_uri)
-        features_df = build_rolling_features(processed_df)
-        return write_features(features_df, s3_bucket)
+        features_df = build_rolling_features(processed_df).cache()
+
+        # Gate the write. Reconciliation against processed is only
+        # possible here, where both frames are in hand, so the DAG runs
+        # the fuller check and write_features skips its own.
+        report = check_feature_quality(features_df, processed_df=processed_df)
+        logger.info(report.summary())
+        logger.info(
+            "features rows per season partition: %s", partition_row_counts(features_df)
+        )
+        report.raise_for_status()
+
+        return write_features(features_df, s3_bucket, validate=False)
     finally:
         spark.stop()
 
